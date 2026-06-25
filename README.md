@@ -10,13 +10,34 @@ An agentic equity research system — a set of independent commands, each usable
 
 ## Setup
 
-Run once before starting a new session (especially in a fresh cloud environment):
+Prism runs inside Claude Code. One-time setup:
 
-```
-bash setup.sh
-```
+1. **Copy the env template** and fill in whichever keys you want (all are optional except `OPENAI_API_KEY` for `/podcast` — see the table):
+   ```
+   cp .env.example .env
+   ```
+2. **Run the setup script** — installs Python deps (`yfinance`), checks for `ffmpeg` / `gh`, and verifies every environment variable and settings file below (it loads `.env`, so it sees values configured there). Safe to re-run.
+   ```
+   bash setup.sh
+   ```
 
-Checks and installs Python packages (`yfinance`), verifies `ffmpeg` and `gh` are on PATH, and confirms `OPENAI_API_KEY` is set. Safe to re-run — skips packages that are already installed.
+**Environment variables** — set in `.env` (gitignored), or in your cloud sandbox's env:
+
+| Variable | Used by | Required? |
+|---|---|---|
+| `OPENAI_API_KEY` | `/podcast` (TTS) | **Required** for `/podcast` |
+| `NOTION_TOKEN` | `/log-trade` (write), `/scout` (read) | Optional — without it, `/log-trade` logs locally only and `/scout` skips the Notion read |
+| `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` | `/log-trade` | Optional — falls back to resolving the "Investment Log" DB by name |
+| `NOTION_INVESTMENT_LOG_DATABASE_ID` | `/scout`, `/log-trade` | Optional — same name fallback |
+| `EDGAR_CONTACT_EMAIL` | `/scout`, `/research` (SEC EDGAR requires a contact email in the request header) | Recommended — falls back to a generic placeholder |
+| `X_BEARER_TOKEN` | `/scout` (X signal source) | Optional — without it, scout runs on GDELT / HN / EDGAR |
+
+**Settings files:**
+
+- **`.claude/scout-x-feeds.json`** — the curated X accounts `/scout` pulls from (`handles[]`, optional `topics` / `note` per account). Ships as an example template; edit it with accounts you actually follow. Only used when `X_BEARER_TOKEN` is set; harmless to leave as the template otherwise.
+- **Notion MCP** — `/log-trade` and `/scout` reach Notion through the MCP server wired in `.mcp.json` (`@notionhq/notion-mcp-server`, launched by `scripts/start-notion-mcp.sh`, which reads `NOTION_TOKEN` from `.env`). Create a Notion *internal integration*, copy its secret into `NOTION_TOKEN`, and share your Investment Log database with that integration. Step-by-step in `.env.example`.
+
+**System tools:** `ffmpeg` (podcast audio stitching), `gh` (PR creation), `python3`. `setup.sh` checks for these.
 
 ---
 
@@ -136,7 +157,7 @@ Logs an investment action to the Notion Investment Log database, links it to the
 3. Updates the tracking layer: `trades.json` always; `portfolio.json` / `candidates.json` when a position is opened (candidate → portfolio) or fully exited. Regenerates the dashboard.
 4. Lands on its own branch + Pull Request, same as every other command.
 
-**Requirements:** Notion MCP connected (hosted server at `mcp.notion.com/mcp`, OAuth). Run `claude mcp add --transport http --scope user notion https://mcp.notion.com/mcp` once, then complete the OAuth flow on next session start. Share the Investment Log database with the integration when prompted.
+**Requirements:** a Notion integration token in `NOTION_TOKEN` (the MCP server wired in `.mcp.json` reads it from `.env`), with your Investment Log database shared to that integration. Optionally pin the database via `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` / `NOTION_INVESTMENT_LOG_DATABASE_ID` (otherwise it's resolved by name). Without Notion configured, `/log-trade` still records every trade locally in `trades.json`. See the **Setup** section and `.env.example`.
 
 **Examples:**
 

@@ -10,6 +10,7 @@ FAIL=0
 
 ok()   { echo "  [ok] $*"; ((PASS++)) || true; }
 warn() { echo "  [!!] $*"; ((FAIL++)) || true; }
+info() { echo "  [--] $*"; }   # optional / degrades gracefully — not counted as a failure
 
 # Pick a pip-capable Python interpreter.
 # Prefer an interpreter where pip can install packages (not an externally-managed
@@ -89,6 +90,17 @@ echo ""
 
 echo "Environment variables:"
 
+# Load .env so these checks see values configured there, not just exported shell
+# vars. Same pattern scripts/start-notion-mcp.sh uses to feed the Notion MCP server.
+if [[ -f "$REPO_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$REPO_DIR/.env"
+  set +a
+  echo "  (loaded values from $REPO_DIR/.env)"
+fi
+
+# Required for the feature noted; missing → warn (counts as an issue).
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
   ok "OPENAI_API_KEY set"
 else
@@ -96,12 +108,65 @@ else
   echo "       add to .env: OPENAI_API_KEY=sk-..."
 fi
 
+# Optional — the engine degrades gracefully without these; missing → info, not a failure.
 if [[ -n "${NOTION_TOKEN:-}" ]]; then
   ok "NOTION_TOKEN set"
 else
-  warn "NOTION_TOKEN not set — /log-trade will fail with 401"
-  echo "       add to .env: NOTION_TOKEN=ntn_..."
-  echo "       see .env.example for setup instructions"
+  info "NOTION_TOKEN not set — /log-trade records trades locally only; /scout skips the Notion read"
+  echo "       optional. add to .env: NOTION_TOKEN=ntn_...   (see .env.example for steps)"
+fi
+
+if [[ -n "${NOTION_INVESTMENT_LOG_DATA_SOURCE_ID:-}" ]]; then
+  ok "NOTION_INVESTMENT_LOG_DATA_SOURCE_ID set"
+else
+  info "NOTION_INVESTMENT_LOG_DATA_SOURCE_ID not set — /log-trade resolves the DB by name instead"
+  echo "       optional. add to .env: NOTION_INVESTMENT_LOG_DATA_SOURCE_ID=..."
+fi
+
+if [[ -n "${NOTION_INVESTMENT_LOG_DATABASE_ID:-}" ]]; then
+  ok "NOTION_INVESTMENT_LOG_DATABASE_ID set"
+else
+  info "NOTION_INVESTMENT_LOG_DATABASE_ID not set — /scout resolves the DB by name instead"
+  echo "       optional. add to .env: NOTION_INVESTMENT_LOG_DATABASE_ID=..."
+fi
+
+if [[ -n "${EDGAR_CONTACT_EMAIL:-}" ]]; then
+  ok "EDGAR_CONTACT_EMAIL set"
+else
+  info "EDGAR_CONTACT_EMAIL not set — SEC EDGAR requests use a generic placeholder User-Agent"
+  echo "       recommended. add to .env: EDGAR_CONTACT_EMAIL=you@example.com"
+fi
+
+if [[ -n "${X_BEARER_TOKEN:-}" ]]; then
+  ok "X_BEARER_TOKEN set"
+else
+  info "X_BEARER_TOKEN not set — /scout skips the X signal source (runs on GDELT/HN/EDGAR)"
+  echo "       optional. add to .env: X_BEARER_TOKEN=..."
+fi
+
+echo ""
+
+# --- Settings files --------------------------------------------------------
+
+echo "Settings files:"
+
+if [[ -f "$REPO_DIR/.env" ]]; then
+  ok ".env present"
+else
+  warn ".env not found — copy the template and fill in your keys"
+  echo "       cp .env.example .env"
+fi
+
+XFEEDS="$REPO_DIR/.claude/scout-x-feeds.json"
+if [[ -f "$XFEEDS" ]]; then
+  if grep -q "example_account_1" "$XFEEDS" 2>/dev/null; then
+    info ".claude/scout-x-feeds.json is still the example template — edit it with accounts you follow"
+    echo "       only used when X_BEARER_TOKEN is set; harmless to leave as-is otherwise"
+  else
+    ok ".claude/scout-x-feeds.json customized"
+  fi
+else
+  info ".claude/scout-x-feeds.json absent — /scout runs without the X source"
 fi
 
 echo ""
