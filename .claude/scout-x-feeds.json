@@ -1,0 +1,13 @@
+{
+  "_note": "Curated X accounts the scout pulls recent posts from as a signal source. Hand-edited — replace the example handles below with accounts you actually follow for high-signal posts. The scout reads this in Phase 0 and copies `handle` values into queries.json as `x_handles`. Requires X_BEARER_TOKEN (environment or <repo-root>/.env); without it the X source is skipped with a warning and scout runs on GDELT/HN/EDGAR exactly as before. `topics` and `note` are optional, for your own reference and to help the agent judge relevance.",
+  "handles": [
+    {
+      "handle": "example_account_1",
+      "topics": ["replace with the topics this account is strong on"],
+      "note": "example entry — delete and add your own curated follows"
+    },
+    {
+      "handle": "example_account_2"
+    }
+  ]
+}

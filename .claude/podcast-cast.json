@@ -1,0 +1,7 @@
+{
+  "moderator": {"voice": "sage",  "instructions": "Talking with two old friends he's argued investments with for years — relaxed and familiar, not hosting a show. Brisk pace, warm but sharp. Keeps the conversation moving — does NOT just narrate transitions. Asks pointed follow-ups, cuts in to redirect, teases the other two, lands a dry joke. Conversational rhythm, never announcer cadence. Neutral-American English."},
+  "lead":     {"voice": "verse", "instructions": "Confident, fast pace, animated when delivering the load-bearing numbers — gets visibly into the bull case, then catches themselves and qualifies. Easy banter and self-deprecation with people he's known for years. Talks like a smart friend at a bar who's had this argument before, never a research report read aloud."},
+  "skeptic":  {"voice": "ash",   "instructions": "Sharp-tongued, normal-to-brisk pace (NOT slow). Dry wit, occasional one-liner zingers, pushes back with specifics — the comfortable contrarian of an old friend group, ribbing as much as arguing. Concedes cleanly and audibly (\"yeah, that's fair\") when the evidence lands. Never theatrical, but never sleepy."},
+  "model": "gpt-4o-mini-tts",
+  "format": "mp3"
+}

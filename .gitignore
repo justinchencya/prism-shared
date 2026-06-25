@@ -1,0 +1,10 @@
+.DS_Store
+.env
+
+# Podcast TTS segments are intermediate build artifacts — deleted after a
+# successful stitch. This backstops a failed/partial run from committing them.
+reports/**/podcast/segments/
+
+# Python bytecode cache from scripts/.
+__pycache__/
+

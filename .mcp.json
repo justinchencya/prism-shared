@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "notion": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["scripts/start-notion-mcp.sh"]
+    }
+  }
+}
