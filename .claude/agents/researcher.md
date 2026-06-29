@@ -58,12 +58,12 @@ Process:
 
    Cite snapshot values as `(yfinance, <fetched_at date>)`. If the script fails or a field is `null`, note the gap inline and fall back to WebSearch + WebFetch for that specific metric.
 
+   **Step 3b — fill gaps and consensus**: For metrics not in the JSON (consensus FY+1/FY+2 revenue, NRR, specific segment growth, analyst price targets), use WebSearch + WebFetch as before — recent IR pages, Bloomberg/Reuters quoting consensus, sell-side previews. **Note the retrieval date inline** because prices and estimates stale fast. If a free path doesn't exist for a number, say so and give a conviction-flagged best-effort.
+
    **Step 3c — read the technicals as entry-timing context, never as a signal.** These are price-derived (MAs, RSI, momentum, relative strength) — they tell you *when / at what level* to enter, not *whether the thesis holds*. The user holds for years, so they do **not** drive the Thesis verdict and almost never the Market verdict on their own. Use them to:
    - **sharpen the Entry condition** — e.g. "price is 10% below its 50-day MA and RSI 41, so a pullback to the 200-day (~$269) is a more attractive multi-year entry than chasing here."
    - **flag a divergence worth a sentence** — fundamentals improving but `rel_strength_vs_spy` negative and volume fading (capital leaving the name despite the story), or the reverse (accumulation ahead of the fundamentals). Note it; don't overweight it.
    Do **not** emit buy/sell calls from RSI/MACD-style thresholds, and do not let a momentum reading override a fundamentals-and-flows verdict. If `technicals` is empty/partial, say so in one line and move on.
-
-   **Step 3b — fill gaps and consensus**: For metrics not in the JSON (consensus FY+1/FY+2 revenue, NRR, specific segment growth, analyst price targets), use WebSearch + WebFetch as before — recent IR pages, Bloomberg/Reuters quoting consensus, sell-side previews. **Note the retrieval date inline** because prices and estimates stale fast. If a free path doesn't exist for a number, say so and give a conviction-flagged best-effort.
 4. Form **two separate verdicts**:
    - **Thesis verdict** (Support / Weaken / Inconclusive): does the hypothesis hold up given the evidence?
    - **Market verdict** (Buy / Hold / Avoid): given current price + consensus + your read of the long-term setup, is this a buy for a **multi-year holder**? The two verdicts can and often will diverge. A correct thesis already discounted into the price is not a buy. A quality compounder at a full but defensible valuation can be a buy. State which lens applies and why.
