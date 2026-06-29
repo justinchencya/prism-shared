@@ -206,7 +206,7 @@ The user is a long-term investor (multi-year holds), not a short-term arbitrageu
   - Ticker → CIK: `https://www.sec.gov/files/company_tickers.json`
   - Filings: `https://data.sec.gov/submissions/CIK{10-digit-padded}.json`
   - Company facts: `https://data.sec.gov/api/xbrl/companyfacts/CIK{10-digit-padded}.json`
-- **Yahoo Finance via yfinance** (`pip install yfinance`) — used by `scripts/fetch_ticker_stats.py` for per-ticker financial stats (price, PE ratios, margins, quarterly financials, price history). Free, no auth. Researchers call this script at the start of Phase 3 in ticker sub-mode; do not call Yahoo Finance ad hoc when this script is available.
+- **Yahoo Finance via yfinance** (`pip install yfinance`) — used by `scripts/fetch_ticker_stats.py` for per-ticker financial stats (price, PE ratios, margins, quarterly financials, price history) plus a `technicals` block: 50/200-day MAs, RSI(14), trailing returns, relative strength vs SPY (the free capital-flow proxy), and a volume trend — all computed in pandas (no ta-lib). Technicals are an **entry-timing lens** for the multi-year holder, never a buy/sell signal. Free, no auth. Researchers call this script at the start of Phase 3 in ticker sub-mode; do not call Yahoo Finance ad hoc when this script is available.
 - The research pipeline uses no paid data APIs (web search, WebFetch, EDGAR, yfinance are all free). If a free path doesn't exist for a question, say so in the report. The lone keyed source anywhere in Prism is scout's optional X feed (`X_BEARER_TOKEN`), which degrades to a warning when unset.
 
 ## Dates

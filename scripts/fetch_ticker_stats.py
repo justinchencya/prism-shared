@@ -10,7 +10,15 @@ Writes:
     snapshot      — current price, PE ratios, market cap, EV/revenue, margins, EPS estimates
     history       — quarterly revenue/margins/YoY growth (up to 8 quarters)
     price_history — monthly closing prices for 3 years
+    technicals    — entry-timing/positioning lens computed in pandas (no ta-lib):
+                    50/200-day MAs + distance, RSI(14), trailing returns,
+                    relative strength vs SPY, volume trend, 52-week position
     edgar_cross_check — annual revenue from EDGAR 10-K filings (sanity check)
+
+  All technicals are derived price math — they inform *when / at what level* to
+  enter, never *whether the thesis holds*. The relative-strength-vs-SPY block is
+  the closest free proxy for where capital is flowing. This is a long-term
+  holder's tool: not a buy/sell signal generator.
 
 Sources:
   Primary:   Yahoo Finance via yfinance (pip install yfinance)
@@ -202,6 +210,128 @@ def fetch_price_history(t, notes: list) -> dict:
         return {}
 
 
+def _pct(numer, denom):
+    """Safe percentage-change as a decimal (e.g. 0.0432 = +4.32%). None on bad input."""
+    try:
+        if denom in (None, 0) or numer is None:
+            return None
+        return round(float(numer) / float(denom) - 1.0, 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _trailing_return(closes, lookback_days: int):
+    """Return over the last `lookback_days` trading sessions, as a decimal."""
+    if closes is None or len(closes) <= lookback_days:
+        return None
+    return _pct(closes.iloc[-1], closes.iloc[-1 - lookback_days])
+
+
+def fetch_technicals(t, ticker: str, notes: list) -> dict:
+    """Entry-timing / positioning lens computed from daily price data in pandas.
+
+    All values are price-derived math (no ta-lib): moving averages and distance
+    from them, Wilder RSI(14), trailing returns, relative strength vs SPY, and a
+    volume trend. These inform *when / at what level* to enter — not the thesis.
+    Degrades gracefully: any failure appends a note and the block is partial.
+    """
+    tech: dict = {}
+    try:
+        import pandas as pd  # noqa: F401 — bundled with yfinance
+
+        hist = t.history(period="2y", interval="1d")
+        if hist is None or hist.empty or "Close" not in hist:
+            notes.append("technicals: daily price history empty")
+            return tech
+
+        close = hist["Close"].dropna()
+        if len(close) < 30:
+            notes.append("technicals: <30 daily closes — too short for indicators")
+            return tech
+
+        last = float(close.iloc[-1])
+        asof = close.index[-1]
+        tech["asof"] = asof.strftime("%Y-%m-%d") if hasattr(asof, "strftime") else str(asof)[:10]
+        tech["price"] = round(last, 2)
+
+        # Moving averages (need enough history; null if not)
+        for win, key in [(50, "sma50"), (200, "sma200")]:
+            if len(close) >= win:
+                ma = float(close.rolling(win).mean().iloc[-1])
+                tech[key] = round(ma, 2)
+                tech[f"pct_vs_{key}"] = _pct(last, ma)
+            else:
+                tech[key] = None
+                tech[f"pct_vs_{key}"] = None
+
+        # 52-week position from daily data
+        window = close.iloc[-252:] if len(close) >= 252 else close
+        hi, lo = float(window.max()), float(window.min())
+        tech["week52_high"] = round(hi, 2)
+        tech["week52_low"] = round(lo, 2)
+        tech["pct_from_52w_high"] = _pct(last, hi)   # ≤0: below the high
+        tech["pct_from_52w_low"] = _pct(last, lo)    # ≥0: above the low
+
+        # Wilder RSI(14)
+        try:
+            delta = close.diff()
+            gain = delta.clip(lower=0)
+            loss = -delta.clip(upper=0)
+            avg_gain = gain.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+            rs = avg_gain / avg_loss
+            rsi = 100 - 100 / (1 + rs)
+            rsi_last = rsi.iloc[-1]
+            tech["rsi14"] = round(float(rsi_last), 1) if is_num(rsi_last) else None
+        except Exception as e:
+            notes.append(f"technicals.rsi14: {e}")
+            tech["rsi14"] = None
+
+        # Trailing returns (≈21 trading days / month)
+        tech["return_1m"] = _trailing_return(close, 21)
+        tech["return_3m"] = _trailing_return(close, 63)
+        tech["return_6m"] = _trailing_return(close, 126)
+        tech["return_12m"] = _trailing_return(close, 252)
+
+        # Relative strength vs SPY — closest free proxy for capital flow direction.
+        # Positive excess return = outperforming the index over that window.
+        try:
+            import yfinance as yf
+            spy = yf.Ticker("SPY").history(period="1y", interval="1d")
+            if spy is not None and not spy.empty and "Close" in spy:
+                spy_close = spy["Close"].dropna()
+                rel = {"benchmark": "SPY"}
+                for days, key in [(63, "excess_return_3m"), (126, "excess_return_6m")]:
+                    tr = _trailing_return(close, days)
+                    sr = _trailing_return(spy_close, days)
+                    rel[key] = round(tr - sr, 4) if tr is not None and sr is not None else None
+                tech["rel_strength_vs_spy"] = rel
+            else:
+                notes.append("technicals.rel_strength: SPY history empty")
+        except Exception as e:
+            notes.append(f"technicals.rel_strength: {e}")
+
+        # Volume trend — recent 20-session avg vs prior ~3-month avg
+        try:
+            if "Volume" in hist:
+                vol = hist["Volume"].dropna()
+                if len(vol) >= 63:
+                    v20 = float(vol.iloc[-20:].mean())
+                    v3m = float(vol.iloc[-63:].mean())
+                    tech["volume"] = {
+                        "avg_20d": round(v20),
+                        "avg_3m": round(v3m),
+                        "ratio_20d_vs_3m": round(v20 / v3m, 2) if v3m else None,
+                    }
+        except Exception as e:
+            notes.append(f"technicals.volume: {e}")
+
+    except Exception as e:
+        notes.append(f"technicals: {e}")
+
+    return tech
+
+
 def fetch_edgar_cross_check(ticker: str, notes: list):
     """Fetch reported annual revenue from EDGAR company facts as a sanity check on yfinance figures."""
     try:
@@ -275,6 +405,7 @@ def main() -> None:
             "snapshot": {},
             "history": {},
             "price_history": {},
+            "technicals": {},
             "edgar_cross_check": None,
             "notes": ["yfinance not installed — run: pip install yfinance"],
         }
@@ -292,6 +423,8 @@ def main() -> None:
     history = fetch_quarterly_history(t, notes)
     log(f"fetching 3-year price history for {ticker}…")
     price_history = fetch_price_history(t, notes)
+    log(f"computing technicals (MAs, RSI, returns, RS vs SPY) for {ticker}…")
+    technicals = fetch_technicals(t, ticker, notes)
     log(f"fetching EDGAR annual revenue cross-check for {ticker}…")
     edgar = fetch_edgar_cross_check(ticker, notes)
 
@@ -301,6 +434,7 @@ def main() -> None:
         "snapshot": snapshot,
         "history": history,
         "price_history": price_history,
+        "technicals": technicals,
         "edgar_cross_check": edgar,
         "notes": notes,
     }

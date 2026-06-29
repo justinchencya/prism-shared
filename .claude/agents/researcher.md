@@ -53,9 +53,15 @@ Process:
    - `snapshot`: current price, trailing/forward PE, market cap, EV/revenue, EV/EBITDA, gross and operating margins, forward EPS, 52-week range — all from yfinance, timestamped at fetch time
    - `history`: quarterly revenue (B), gross margin, operating margin, and YoY revenue growth for up to 8 quarters — use these to identify acceleration/deceleration and margin trends
    - `price_history`: monthly closes for 3 years — use for multiple expansion/contraction context relative to fundamentals
+   - `technicals`: an entry-timing / positioning lens computed from daily prices (all decimals) — 50/200-day MAs + `pct_vs_sma50/200`, `rsi14`, trailing `return_1m/3m/6m/12m`, `pct_from_52w_high/low`, `rel_strength_vs_spy` (excess return vs SPY over 3m/6m — the closest free proxy for where capital is flowing), and a `volume` trend (`ratio_20d_vs_3m`). See **Step 3c** for how to use it.
    - `edgar_cross_check`: annual revenue from EDGAR 10-K filings — sanity-check yfinance figures against reported data
 
    Cite snapshot values as `(yfinance, <fetched_at date>)`. If the script fails or a field is `null`, note the gap inline and fall back to WebSearch + WebFetch for that specific metric.
+
+   **Step 3c — read the technicals as entry-timing context, never as a signal.** These are price-derived (MAs, RSI, momentum, relative strength) — they tell you *when / at what level* to enter, not *whether the thesis holds*. The user holds for years, so they do **not** drive the Thesis verdict and almost never the Market verdict on their own. Use them to:
+   - **sharpen the Entry condition** — e.g. "price is 10% below its 50-day MA and RSI 41, so a pullback to the 200-day (~$269) is a more attractive multi-year entry than chasing here."
+   - **flag a divergence worth a sentence** — fundamentals improving but `rel_strength_vs_spy` negative and volume fading (capital leaving the name despite the story), or the reverse (accumulation ahead of the fundamentals). Note it; don't overweight it.
+   Do **not** emit buy/sell calls from RSI/MACD-style thresholds, and do not let a momentum reading override a fundamentals-and-flows verdict. If `technicals` is empty/partial, say so in one line and move on.
 
    **Step 3b — fill gaps and consensus**: For metrics not in the JSON (consensus FY+1/FY+2 revenue, NRR, specific segment growth, analyst price targets), use WebSearch + WebFetch as before — recent IR pages, Bloomberg/Reuters quoting consensus, sell-side previews. **Note the retrieval date inline** because prices and estimates stale fast. If a free path doesn't exist for a number, say so and give a conviction-flagged best-effort.
 4. Form **two separate verdicts**:
@@ -72,7 +78,7 @@ You receive:
 
 Process:
 1. Read the cited round-1 reports once (they're shared context for all names).
-2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`.
+2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block (MAs, RSI, momentum, relative strength vs SPY) — fold it into the **Entry condition** line as entry-timing context only (see Step 3c in ticker sub-mode); never as a buy/sell signal.
 3. For each ticker, do a **capped** search pass — ~3–4 WebSearch/WebFetch operations per name — targeting only what the verdicts need: the load-bearing open question(s) and anything the stats JSON can't answer. This is a survey, not a deep dive; unanswered open questions go in that ticker's Open/unanswered line, not into more searching.
 4. Form both verdicts per ticker (same Thesis/Market separation and long-term lens as ticker sub-mode).
 5. Write one file using the **ticker-scan template** below.
@@ -219,6 +225,9 @@ Process:
 
 ## What's already priced in
 <Explicit read of what the current price implies vs. consensus and your hypothesis. This is the bridge from thesis verdict to market verdict. If the upside is already in the price, say so.>
+
+## Price & positioning
+<2–3 sentences from the `technicals` block: where price sits vs its 50/200-day MAs and 52-week range, RSI/momentum, and relative strength vs SPY (the capital-flow proxy) + volume trend. Frame as entry timing for the multi-year holder — what level improves the setup, or any flow/momentum divergence from the fundamental story. Not a buy/sell signal. Omit only if `technicals` was empty (then say so in one line).>
 
 ## Open / unanswered
 - ...
