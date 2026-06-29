@@ -431,7 +431,7 @@ function renderAlignmentRows(rows) {
       const pos = r.pnl_pct >= 0;
       const cls = pos ? 'pnl-positive' : 'pnl-negative';
       const sign = pos ? '+' : '';
-      const usd = r.pnl_usd != null ? ` <span style="color:#64748b;font-size:11px">(${r.pnl_usd >= 0 ? '+' : ''}$${Math.abs(r.pnl_usd).toLocaleString(undefined,{maximumFractionDigits:0})})</span>` : '';
+      const usd = r.pnl_usd != null ? ` <span style="color:#64748b;font-size:11px">(${r.pnl_usd >= 0 ? '+' : '-'}$${Math.abs(r.pnl_usd).toLocaleString(undefined,{maximumFractionDigits:0})})</span>` : '';
       pnlHtml = `<span class="${cls}">${sign}${r.pnl_pct}%</span>${usd}`;
     }
     return `
@@ -572,7 +572,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
     const totalPnlPct = totalCost ? totalPnlUsd / totalCost * 100 : null;
-    const usdSign = totalPnlUsd >= 0 ? '+' : '';
+    const usdSign = totalPnlUsd >= 0 ? '+' : '-';
     const cls = totalPnlUsd >= 0 ? 'pnl-positive' : 'pnl-negative';
     const usdEl = document.getElementById('stat-pnl-usd');
     const pctEl = document.getElementById('stat-pnl-pct');
