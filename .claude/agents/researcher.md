@@ -53,7 +53,7 @@ Process:
    - `snapshot`: current price, trailing/forward PE, market cap, EV/revenue, EV/EBITDA, gross and operating margins, forward EPS, 52-week range — all from yfinance, timestamped at fetch time
    - `history`: quarterly revenue (B), gross margin, operating margin, and YoY revenue growth for up to 8 quarters — use these to identify acceleration/deceleration and margin trends
    - `price_history`: monthly closes for 3 years — use for multiple expansion/contraction context relative to fundamentals
-   - `technicals`: an entry-timing / positioning lens computed from daily prices (all decimals) — 50/200-day MAs + `pct_vs_sma50/200`, `rsi14`, trailing `return_1m/3m/6m/12m`, `pct_from_52w_high/low`, `rel_strength_vs_spy` (excess return vs SPY over 3m/6m — the closest free proxy for where capital is flowing), and a `volume` trend (`ratio_20d_vs_3m`). See **Step 3c** for how to use it.
+   - `technicals`: an entry-timing / positioning lens computed from daily prices (all decimals) — 50/200-day MAs + `pct_vs_sma50/200`, `rsi14`, trailing `return_1m/3m/6m/12m`, `pct_from_52w_high/low`, `rel_strength_vs_spy` (excess return vs SPY over 3m/6m — the closest free proxy for where capital is flowing), and a `volume` trend (`ratio_20d_vs_3m`).
    - `edgar_cross_check`: annual revenue from EDGAR 10-K filings — sanity-check yfinance figures against reported data
 
    Cite snapshot values as `(yfinance, <fetched_at date>)`. If the script fails or a field is `null`, note the gap inline and fall back to WebSearch + WebFetch for that specific metric.
