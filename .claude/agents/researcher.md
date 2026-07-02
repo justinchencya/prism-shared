@@ -65,7 +65,7 @@ Process:
    - **flag a divergence worth a sentence** — fundamentals improving but `rel_strength_vs_spy` negative and volume fading (capital leaving the name despite the story), or the reverse (accumulation ahead of the fundamentals). Note it; don't overweight it.
    Do **not** emit buy/sell calls from RSI/MACD-style thresholds, and do not let a momentum reading override a fundamentals-and-flows verdict. If `technicals` is empty/partial, say so in one line and move on.
 
-   **Step 3d — institutional breadth (13F) — only when the director's prompt says `include_13f: yes`** (high-effort runs by default, or when the user explicitly asked for the institutional/13F lens). On `include_13f: no` — or if the flag is absent — **skip this step entirely** (it costs minutes per name) and write the one-line skip note in the **Institutional ownership** template section instead. When enabled, run via Bash:
+   **Step 3d — institutional breadth (13F) — only when the director's prompt says `include_13f: yes`** (high-effort runs by default, or when the user explicitly asked for the institutional/13F lens). On `include_13f: no` — or if an initial dispatch omits the flag — **skip this step entirely** (it costs minutes per name) and write the one-line skip note in the **Institutional ownership** template section instead. In revision mode, run it (regardless of flag) if the critique asks for the 13F section. When enabled, run via Bash:
    ```
    python scripts/fetch_13f_breadth.py <TICKER> reports/<run>/tickers/ticker_13f_<TICKER>.json
    ```

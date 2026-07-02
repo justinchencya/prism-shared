@@ -46,14 +46,12 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-# SEC requires a contact email in the User-Agent. Read it from the env so the
-# engine carries no personal address; falls back to a generic placeholder.
-UA = f"Prism researcher ({os.environ.get('EDGAR_CONTACT_EMAIL', 'prism-user@example.com')})"
 EDGAR_FTS = "https://efts.sec.gov/LATEST/search-index"
 CUSIP_MAP_PATH = Path(__file__).resolve().parent.parent / ".claude" / "cusip-map.json"
 
@@ -73,10 +71,35 @@ def log(msg: str) -> None:
     print(f"fetch_13f_breadth: {msg}", file=sys.stderr)
 
 
+def load_dotenv(repo_root: Path) -> None:
+    """Load KEY=VALUE pairs from <repo-root>/.env into os.environ if not already set."""
+    env_path = repo_root / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+def ua() -> str:
+    # SEC requires a contact email in the User-Agent. Read it lazily (after
+    # load_dotenv) so EDGAR_CONTACT_EMAIL from .env is honored; the engine
+    # carries no personal address — generic fallback when unset.
+    return f"Prism researcher ({os.environ.get('EDGAR_CONTACT_EMAIL', 'prism-user@example.com')})"
+
+
 def get_json(url: str, timeout: int = 20, retries: int = 4, backoff: float = 2.0) -> dict:
     """GET + parse JSON. EDGAR FTS intermittently returns transient 5xx / error
-    bodies; retry those with linear backoff and raise only after all attempts."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    bodies; retry those with linear backoff. HTTP 4xx won't resolve on retry
+    (bad query, throttled window, blocked UA) — bail fast so a dead run
+    degrades in seconds, not minutes."""
+    req = urllib.request.Request(url, headers={"User-Agent": ua(), "Accept": "application/json"})
     last_err = None
     for attempt in range(retries + 1):
         try:
@@ -85,7 +108,13 @@ def get_json(url: str, timeout: int = 20, retries: int = 4, backoff: float = 2.0
             if "hits" not in data:  # transient {"message": "Internal server error"} body
                 raise ValueError(f"unexpected response: {str(data)[:120]}")
             return data
-        except Exception as e:  # noqa: BLE001 — retry any transient failure
+        except urllib.error.HTTPError as e:
+            if e.code < 500:
+                raise
+            last_err = e
+            if attempt < retries:
+                time.sleep(backoff * (attempt + 1))
+        except Exception as e:  # noqa: BLE001 — retry any other transient failure
             last_err = e
             if attempt < retries:
                 time.sleep(backoff * (attempt + 1))
@@ -138,12 +167,15 @@ def quarter_ends(n: int, today: date) -> list:
     return list(reversed(ends))
 
 
-def holders_for_quarter(cusip: str, q_end: date) -> set:
-    """Distinct filer CIKs whose 13F-HR (incl. /A) for period q_end contains the CUSIP."""
+def holders_for_quarter(cusip: str, q_end: date) -> tuple:
+    """(distinct filer CIKs, truncated?) for 13F-HRs (incl. /A) whose info table
+    contains the CUSIP for period q_end. truncated=True when the result set hit
+    EDGAR's 10,000-hit cap — the count is then a floor, not a reading."""
     startdt = (q_end + timedelta(days=1)).isoformat()
     enddt = (q_end + timedelta(days=WINDOW_DAYS)).isoformat()
     period = q_end.isoformat()
     ciks: set = set()
+    truncated = False
     offset = 0
     while True:
         params = {
@@ -164,11 +196,12 @@ def holders_for_quarter(cusip: str, q_end: date) -> set:
             if filer_ciks:
                 ciks.add(str(filer_ciks[0]).lstrip("0"))
         total = ((data.get("hits") or {}).get("total") or {}).get("value") or 0
+        truncated = truncated or total > MAX_FROM + PAGE_SIZE
         offset += PAGE_SIZE
         if offset >= min(total, MAX_FROM) or not hits:
             break
-        time.sleep(0.25)  # be polite to EDGAR between pages
-    return ciks
+        time.sleep(0.1)  # be polite to EDGAR between pages (their cap is 10 req/s)
+    return ciks, truncated
 
 
 def main() -> None:
@@ -179,6 +212,7 @@ def main() -> None:
     ap.add_argument("--quarters", type=int, default=5)
     args = ap.parse_args()
 
+    load_dotenv(Path(__file__).resolve().parent.parent)
     ticker = args.ticker.strip().upper()
     out_path = Path(args.output).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,7 +227,7 @@ def main() -> None:
         complete = (today - q_end).days >= COMPLETE_AFTER_DAYS
         log(f"scanning 13F filings for {ticker} ({cusip}), period {q_end}…")
         try:
-            ciks = holders_for_quarter(cusip, q_end)
+            ciks, truncated = holders_for_quarter(cusip, q_end)
         except Exception as e:  # noqa: BLE001 — one bad quarter must not kill the series
             notes.append(f"{q_end}: fetch failed after retries: {e}")
             quarters.append({"period": q_end.isoformat(), "holders": None,
@@ -201,6 +235,9 @@ def main() -> None:
                              "complete": complete})
             prev_ciks = None  # can't diff across a gap
             continue
+        if truncated:
+            notes.append(f"{q_end}: hit EDGAR's 10,000-result cap — holders is a floor "
+                         "and new/exited diffs for adjacent quarters are unreliable")
         quarters.append({
             "period": q_end.isoformat(),
             "holders": len(ciks),
