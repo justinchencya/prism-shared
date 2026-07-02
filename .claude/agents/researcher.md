@@ -64,6 +64,18 @@ Process:
    - **sharpen the Entry condition** — e.g. "price is 10% below its 50-day MA and RSI 41, so a pullback to the 200-day (~$269) is a more attractive multi-year entry than chasing here."
    - **flag a divergence worth a sentence** — fundamentals improving but `rel_strength_vs_spy` negative and volume fading (capital leaving the name despite the story), or the reverse (accumulation ahead of the fundamentals). Note it; don't overweight it.
    Do **not** emit buy/sell calls from RSI/MACD-style thresholds, and do not let a momentum reading override a fundamentals-and-flows verdict. If `technicals` is empty/partial, say so in one line and move on.
+
+   **Step 3d — institutional breadth (13F) — only when the director's prompt says `include_13f: yes`** (high-effort runs by default, or when the user explicitly asked for the institutional/13F lens). On `include_13f: no` — or if an initial dispatch omits the flag — **skip this step entirely** (it costs minutes per name) and write the one-line skip note in the **Institutional ownership** template section instead. In revision mode, run it (regardless of flag) if the critique asks for the 13F section. When enabled, run via Bash:
+   ```
+   python scripts/fetch_13f_breadth.py <TICKER> reports/<run>/tickers/ticker_13f_<TICKER>.json
+   ```
+   This scans SEC 13F filings and writes, per calendar quarter (last ~5), the count of distinct institutions holding the name (`holders`, deduped by filer CIK) plus `new_holders` / `exited_holders` vs the prior quarter. If the script exits asking for a CUSIP (uncached ticker), find the company's CUSIP via WebSearch (IR page, prospectus, any 13F aggregator — foreign issuers have a letter-prefixed CINS) and re-run with `--cusip <CUSIP>`; the script caches it for future runs.
+
+   Read it as a **confirmation lens, not a discovery signal**: 13F positions are up to 45 days stale at filing and describe last quarter's book, so it tells you whether professional money agrees with the thesis, never ahead of it. Rules of use:
+   - **Direction over level, streak over quarter.** Holder count rising across 2–3+ consecutive quarters = broadening institutional sponsorship (many independent funds entering — the strongest form of the signal). One quarter is noise. Absolute count mostly reflects market-cap/index membership.
+   - **`new_holders` is the sharpest series** — accelerating new positions quarter over quarter means fresh money is still arriving; decelerating while the count plateaus means the entry is getting crowded.
+   - Ignore a quarter with `complete: false` beyond "early filers so far", and never diff against it.
+   - Cite as `(SEC 13F via EDGAR full-text search, <fetched_at date>)`. Fold the read into the **Institutional ownership** template section and, where it sharpens it, the Entry condition. A breadth trend that contradicts the fundamental story (thesis bullish, institutions leaving for 2+ quarters) is a divergence worth naming in the verdict reasoning — but like technicals it never overrides a fundamentals verdict on its own.
 4. Form **two separate verdicts**:
    - **Thesis verdict** (Support / Weaken / Inconclusive): does the hypothesis hold up given the evidence?
    - **Market verdict** (Buy / Hold / Avoid): given current price + consensus + your read of the long-term setup, is this a buy for a **multi-year holder**? The two verdicts can and often will diverge. A correct thesis already discounted into the price is not a buy. A quality compounder at a full but defensible valuation can be a buy. State which lens applies and why.
@@ -78,7 +90,7 @@ You receive:
 
 Process:
 1. Read the cited round-1 reports once (they're shared context for all names).
-2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block (MAs, RSI, momentum, relative strength vs SPY) — fold it into the **Entry condition** line as entry-timing context only (see Step 3c in ticker sub-mode); never as a buy/sell signal.
+2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block (MAs, RSI, momentum, relative strength vs SPY) — fold it into the **Entry condition** line as entry-timing context only (see Step 3c in ticker sub-mode); never as a buy/sell signal. **Skip `fetch_13f_breadth.py` in scan mode** — it takes minutes per name and quick runs don't have the budget; the 13F lens belongs to per-ticker deep dives.
 3. For each ticker, do a **capped** search pass — ~3–4 WebSearch/WebFetch operations per name — targeting only what the verdicts need: the load-bearing open question(s) and anything the stats JSON can't answer. This is a survey, not a deep dive; unanswered open questions go in that ticker's Open/unanswered line, not into more searching.
 4. Form both verdicts per ticker (same Thesis/Market separation and long-term lens as ticker sub-mode).
 5. Write one file using the **ticker-scan template** below.
@@ -228,6 +240,9 @@ Process:
 
 ## Price & positioning
 <2–3 sentences from the `technicals` block: where price sits vs its 50/200-day MAs and 52-week range, RSI/momentum, and relative strength vs SPY (the capital-flow proxy) + volume trend. Frame as entry timing for the multi-year holder — what level improves the setup, or any flow/momentum divergence from the fundamental story. Not a buy/sell signal. Omit only if `technicals` was empty (then say so in one line).>
+
+## Institutional ownership (13F)
+<Only when Step 3d ran (`include_13f: yes`): 2–3 sentences from the 13F breadth JSON — holder-count trend over the covered quarters (direction + streak, e.g. "1,001 → 1,182 → 1,352 → 1,443 institutions over four quarters"), whether new positions are accelerating or decelerating, and what that confirms or contradicts about the thesis. Note the staleness window (latest complete quarter + filing lag). Confirmation lens only — it follows the fundamentals, it doesn't lead them. If the script failed or the series is too short, say so in one line. If Step 3d was skipped, keep the section as the single line: "Not run at this effort level (13F breadth is high-effort by default — re-run with effort=high or request the 13F lens explicitly).".>
 
 ## Open / unanswered
 - ...
