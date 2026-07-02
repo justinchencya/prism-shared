@@ -147,6 +147,7 @@ Otherwise (low/medium/high), spawn one researcher agent **per ticker, all in a s
 - Paths to the round-1 reports cited in the ticker's origin — instruction to read them before starting.
 - Output path: `reports/<run>/tickers/<TICKER>.md` — use the ticker symbol exactly as given, preserving hyphens (e.g. `BRK-B.md`, not `BRKB.md`).
 - Mode: **initial (ticker sub-mode)**.
+- **13F breadth flag**: `include_13f: yes` when effort is **high** OR the user explicitly asked for the institutional/13F lens in the question or sources; otherwise `include_13f: no`. The researcher's Step 3d (`scripts/fetch_13f_breadth.py`, minutes per name) runs only on `yes`.
 - Explicit instruction: the report must produce **two separate verdicts**:
   - **Thesis verdict** — does the hypothesis hold up given the evidence? (Support / Weaken / Inconclusive)
   - **Market verdict** — given current price, valuation multiples, and consensus expectations, is this a Buy / Hold / Avoid **for a long-term investor**? A quality compounder at full valuation can still be a Buy if the multi-year runway is durable. A name pricing in assumptions even base-case multi-year execution can't justify is not, even if the thesis is directionally right. The two verdicts can and often will diverge — state both explicitly.

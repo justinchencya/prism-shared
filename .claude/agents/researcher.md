@@ -65,7 +65,7 @@ Process:
    - **flag a divergence worth a sentence** — fundamentals improving but `rel_strength_vs_spy` negative and volume fading (capital leaving the name despite the story), or the reverse (accumulation ahead of the fundamentals). Note it; don't overweight it.
    Do **not** emit buy/sell calls from RSI/MACD-style thresholds, and do not let a momentum reading override a fundamentals-and-flows verdict. If `technicals` is empty/partial, say so in one line and move on.
 
-   **Step 3d — institutional breadth (13F).** Run via Bash:
+   **Step 3d — institutional breadth (13F) — only when the director's prompt says `include_13f: yes`** (high-effort runs by default, or when the user explicitly asked for the institutional/13F lens). On `include_13f: no` — or if the flag is absent — **skip this step entirely** (it costs minutes per name) and write the one-line skip note in the **Institutional ownership** template section instead. When enabled, run via Bash:
    ```
    python scripts/fetch_13f_breadth.py <TICKER> reports/<run>/tickers/ticker_13f_<TICKER>.json
    ```
@@ -242,7 +242,7 @@ Process:
 <2–3 sentences from the `technicals` block: where price sits vs its 50/200-day MAs and 52-week range, RSI/momentum, and relative strength vs SPY (the capital-flow proxy) + volume trend. Frame as entry timing for the multi-year holder — what level improves the setup, or any flow/momentum divergence from the fundamental story. Not a buy/sell signal. Omit only if `technicals` was empty (then say so in one line).>
 
 ## Institutional ownership (13F)
-<2–3 sentences from the 13F breadth JSON: holder-count trend over the covered quarters (direction + streak, e.g. "1,001 → 1,182 → 1,352 → 1,443 institutions over four quarters"), whether new positions are accelerating or decelerating, and what that confirms or contradicts about the thesis. Note the staleness window (latest complete quarter + filing lag). Confirmation lens only — it follows the fundamentals, it doesn't lead them. If the script failed or the series is too short, say so in one line.>
+<Only when Step 3d ran (`include_13f: yes`): 2–3 sentences from the 13F breadth JSON — holder-count trend over the covered quarters (direction + streak, e.g. "1,001 → 1,182 → 1,352 → 1,443 institutions over four quarters"), whether new positions are accelerating or decelerating, and what that confirms or contradicts about the thesis. Note the staleness window (latest complete quarter + filing lag). Confirmation lens only — it follows the fundamentals, it doesn't lead them. If the script failed or the series is too short, say so in one line. If Step 3d was skipped, keep the section as the single line: "Not run at this effort level (13F breadth is high-effort by default — re-run with effort=high or request the 13F lens explicitly).".>
 
 ## Open / unanswered
 - ...
