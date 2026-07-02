@@ -95,22 +95,60 @@ def build_verdict_lookup(portfolio: dict, candidates: dict) -> dict:
     return lookup
 
 
+# Tracking symbols that differ from their Yahoo Finance quote symbol.
+YAHOO_SYMBOL_ALIASES = {
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+}
+
+
 def fetch_current_prices(tickers: set) -> dict:
     if not tickers:
         return {}
-    try:
-        import yfinance as yf
-    except ImportError:
-        return {}
     prices = {}
-    for ticker in tickers:
+    # Primary: Yahoo Finance chart API via requests. Uses the standard
+    # proxy/CA env vars (REQUESTS_CA_BUNDLE etc.), which yfinance's curl_cffi
+    # backend does not honor — behind a re-terminating proxy that TLS handshake
+    # fails, so requests is the portable path here.
+    try:
+        import requests
+    except ImportError:
+        requests = None
+    if requests is not None:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        for ticker in tickers:
+            try:
+                symbol = YAHOO_SYMBOL_ALIASES.get(ticker, ticker)
+                url = (
+                    "https://query1.finance.yahoo.com/v8/finance/chart/"
+                    f"{symbol}?range=1d&interval=1d"
+                )
+                r = requests.get(url, headers=headers, timeout=20)
+                if r.status_code != 200:
+                    continue
+                meta = r.json()["chart"]["result"][0]["meta"]
+                price = meta.get("regularMarketPrice")
+                if price:
+                    prices[ticker] = float(price)
+            except Exception:
+                pass
+    # Fallback for any ticker still missing: yfinance (works where curl_cffi
+    # can reach Yahoo directly, e.g. off-proxy environments).
+    missing = tickers - prices.keys()
+    if missing:
         try:
-            info = yf.Ticker(ticker).info
-            price = info.get("currentPrice") or info.get("regularMarketPrice")
-            if price:
-                prices[ticker] = float(price)
-        except Exception:
-            pass
+            import yfinance as yf
+        except ImportError:
+            yf = None
+        if yf is not None:
+            for ticker in missing:
+                try:
+                    info = yf.Ticker(ticker).info
+                    price = info.get("currentPrice") or info.get("regularMarketPrice")
+                    if price:
+                        prices[ticker] = float(price)
+                except Exception:
+                    pass
     return prices
 
 

@@ -63,6 +63,38 @@ def get_json(url: str, timeout: int = 20) -> dict:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
+_YF_SESSION = None
+_YF_SESSION_READY = False
+
+
+def yf_ticker(symbol: str):
+    """Build a yf.Ticker, routing through a requests.Session when possible.
+
+    yfinance's default curl_cffi backend does not honor the standard proxy/CA
+    env vars (REQUESTS_CA_BUNDLE / SSL_CERT_FILE), so behind a re-terminating
+    proxy its TLS handshake fails. A plain requests session picks those up
+    automatically; where it can't be built, fall back to yfinance's default.
+    """
+    import yfinance as yf
+
+    global _YF_SESSION, _YF_SESSION_READY
+    if not _YF_SESSION_READY:
+        _YF_SESSION_READY = True
+        try:
+            import requests
+
+            _YF_SESSION = requests.Session()
+            _YF_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
+        except Exception:
+            _YF_SESSION = None
+    if _YF_SESSION is not None:
+        try:
+            return yf.Ticker(symbol, session=_YF_SESSION)
+        except Exception:
+            pass
+    return yf.Ticker(symbol)
+
+
 def ts_to_period(ts) -> str:
     """Convert a pandas Timestamp to 'YYYY-QN' label."""
     try:
@@ -296,8 +328,7 @@ def fetch_technicals(t, ticker: str, notes: list) -> dict:
         # Relative strength vs SPY — closest free proxy for capital flow direction.
         # Positive excess return = outperforming the index over that window.
         try:
-            import yfinance as yf
-            spy = yf.Ticker("SPY").history(period="1y", interval="1d")
+            spy = yf_ticker("SPY").history(period="1y", interval="1d")
             if spy is not None and not spy.empty and "Close" in spy:
                 spy_close = spy["Close"].dropna()
                 rel = {"benchmark": "SPY"}
@@ -412,10 +443,8 @@ def main() -> None:
         out_path.write_text(json.dumps(result, indent=2))
         sys.exit(1)
 
-    import yfinance as yf
-
     log(f"fetching yfinance snapshot for {ticker}…")
-    t = yf.Ticker(ticker)
+    t = yf_ticker(ticker)
     info = t.info or {}
 
     snapshot = fetch_snapshot(info, notes)
