@@ -94,6 +94,21 @@ git switch main                                       # always finish on main
 - **Failure rule** — any git/`gh` failure: report and stop, no destructive retry.
 - PRs are merged only on the user's explicit *merge?* yes; otherwise left open to merge on GitHub. `/podcast` additionally expects its target report to already be merged into `main` (it verifies the report is present right after the sync, before cutting the branch).
 
+## Two-repo sync
+
+Prism lives in two sibling repos:
+
+- **prism-shared** (public) — the engine: `scripts/`, `.claude/agents/`, `.claude/commands/`, `CLAUDE.md`, `README.md`, `setup.sh`. Canonical home for all feature work. Tracking JSONs are empty templates; `scout-x-feeds.json` holds placeholder handles.
+- **prism** (private) — the daily driver: the same engine **plus** personal data (`reports/`, `scouts/`, `memos/`, real `tracking/*.json`, generated `dashboard/index.html`, real X follows, `.env`).
+
+**Rules:**
+
+- Engine changes belong in **prism-shared first**, then sync to prism. When a change lands in prism first (it happens — that's where daily work runs), port it back to prism-shared promptly.
+- Engine files should be **byte-identical** across the two repos. The only expected diffs are personal data: `tracking/*.json`, `dashboard/index.html`, `.claude/scout-x-feeds.json`, `.claude/settings.local.json`, `.claude/podcast-cast.json`, `.env`, `reports/`, `scouts/`, `memos/`.
+- **Nothing personal ever enters prism-shared** — no real handles, Notion IDs, keys, personal paths, or tracking data. prism → prism-shared is a port with sanitization, not a copy.
+- Sync commits reference the source repo's PR (`sync: <what> from prism (#N)`), so direction and provenance are recoverable from history.
+- `/sync` (`.claude/commands/sync.md`) automates the whole flow: diffs the engine set, infers direction from git history, sanitizes, and lands a PR in the receiving repo per the Git convention.
+
 ## Output layout
 
 ```
