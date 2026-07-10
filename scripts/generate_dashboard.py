@@ -5,8 +5,9 @@ import json
 import os
 import re
 import sys
+import time
 import webbrowser
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -150,6 +151,52 @@ def fetch_current_prices(tickers: set) -> dict:
                 except Exception:
                     pass
     return prices
+
+
+def fetch_price_history(tickers: set, start_date: str) -> dict:
+    """Daily closes per ticker from Yahoo's chart API, start_date → today.
+
+    Returns {ticker: {"YYYY-MM-DD": close}}. Same requests-based path (and
+    proxy behavior) as fetch_current_prices; any ticker that fails is simply
+    absent and the P&L chart degrades to a note.
+    """
+    if not tickers or not start_date:
+        return {}
+    try:
+        import requests
+    except ImportError:
+        return {}
+    try:
+        # small buffer before the first trade so the first point has a close
+        p1 = int(datetime.fromisoformat(start_date).timestamp()) - 7 * 86400
+    except ValueError:
+        return {}
+    p2 = int(time.time()) + 86400
+    headers = {"User-Agent": "Mozilla/5.0"}
+    history = {}
+    for ticker in tickers:
+        symbol = YAHOO_SYMBOL_ALIASES.get(ticker, ticker)
+        url = (
+            "https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{symbol}?period1={p1}&period2={p2}&interval=1d"
+        )
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+            if r.status_code != 200:
+                continue
+            result = r.json()["chart"]["result"][0]
+            stamps = result.get("timestamp") or []
+            closes = result["indicators"]["quote"][0].get("close") or []
+            series = {}
+            for ts, close in zip(stamps, closes):
+                if close is not None:
+                    day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+                    series[day] = float(close)
+            if series:
+                history[ticker] = series
+        except Exception:
+            pass
+    return history
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +348,140 @@ def build_pnl_by_alignment(trades: list, alignment_rows: list, prices: dict) -> 
     return result
 
 
+def build_value_series(trades: list, history: dict) -> dict:
+    """Daily portfolio market value vs. cumulative net invested.
+
+    Value = shares held (cumulative buys − sells) × that day's close, summed
+    across tickers. Net invested = cumulative buy cost − sell proceeds, so the
+    gap between the two lines is total P&L, realized + unrealized — no lot
+    matching needed at this level. A ticker whose trades lack shares/price, or
+    with no price history, can't be valued; it is excluded entirely (both
+    lines) and reported in "excluded" so the chart can say so.
+    """
+    dated = sorted((t for t in trades if t.get("date")), key=lambda t: t["date"])
+    if not dated:
+        return {"series": [], "excluded": []}
+
+    def complete(t):
+        return bool(t.get("shares") and t.get("price_per_share"))
+
+    all_tickers = {t["ticker"] for t in dated}
+    bad = {}
+    for t in dated:
+        if not complete(t):
+            bad.setdefault(t["ticker"], "missing shares/price on some trades")
+    for tk in all_tickers:
+        if tk not in bad and tk not in history:
+            bad[tk] = "no price history"
+    # a ticker whose recorded sells exceed its recorded buys held shares from
+    # before the trade log began — its proceeds would fake the net-invested
+    # line (return of unrecorded principal reads as P&L), so drop it whole
+    running = {}
+    for t in dated:
+        tk = t["ticker"]
+        if tk in bad:
+            continue
+        sign = 1 if t["action"] in ("buy", "add") else -1
+        running[tk] = running.get(tk, 0) + sign * t["shares"]
+        if running[tk] < -1e-9:
+            bad[tk] = "sells exceed recorded buys (position predates trade log)"
+    usable = [t for t in dated if t["ticker"] not in bad]
+    excluded = [{"ticker": k, "reason": v} for k, v in sorted(bad.items())]
+    if not usable:
+        return {"series": [], "excluded": excluded}
+
+    first_date = usable[0]["date"]
+    calendar = sorted({d for tk in {t["ticker"] for t in usable}
+                       for d in history[tk]})
+    # forward-fill closes onto the union calendar (crypto trades weekends,
+    # equities don't — every ticker needs a close on every calendar day)
+    filled = {}
+    for tk in {t["ticker"] for t in usable}:
+        last = None
+        col = {}
+        for d in calendar:
+            last = history[tk].get(d, last)
+            col[d] = last
+        filled[tk] = col
+
+    series = []
+    shares_held = {}
+    invested = 0.0
+    idx = 0
+    for d in calendar:
+        if d < first_date:
+            continue
+        while idx < len(usable) and usable[idx]["date"] <= d:
+            t = usable[idx]
+            sign = 1 if t["action"] in ("buy", "add") else -1
+            shares_held[t["ticker"]] = shares_held.get(t["ticker"], 0) + sign * t["shares"]
+            invested += sign * t["shares"] * t["price_per_share"]
+            idx += 1
+        value = 0.0
+        ok = True
+        for tk, sh in shares_held.items():
+            if sh <= 1e-9:
+                continue
+            close = filled[tk].get(d)
+            if close is None:
+                ok = False  # held before its first close (pre-IPO gap) — skip day
+                break
+            value += sh * close
+        if ok:
+            series.append({"date": d, "value": round(value, 2),
+                           "invested": round(invested, 2)})
+    return {"series": series, "excluded": excluded}
+
+
+def build_pnl_drivers(trades: list, prices: dict, alignment_rows: list) -> list:
+    """Per-ticker total P&L (realized + unrealized), biggest movers first.
+
+    total = (shares still held × current price) + sell proceeds − buy cost.
+    Ticker-level netting needs no lot matching. Alignment stays a per-trade
+    attribute, surfaced here only as counts; per-trade detail lives in the
+    Research → Trade tab.
+    """
+    align_by_id = {r["trade_id"]: r for r in alignment_rows}
+    out = []
+    for ticker in sorted({t["ticker"] for t in trades}):
+        tts = sorted((t for t in trades if t["ticker"] == ticker),
+                     key=lambda t: t.get("date", ""))
+        counts = {"aligned": 0, "misaligned": 0, "neutral": 0, "unlinked": 0}
+        for t in tts:
+            alignment = align_by_id.get(t["id"], {}).get("alignment", "unlinked")
+            counts[alignment] = counts.get(alignment, 0) + 1
+
+        pnl_usd = pnl_pct = None
+        reason = None
+        if any(not (t.get("shares") and t.get("price_per_share")) for t in tts):
+            reason = "missing shares/price on some trades"
+        else:
+            cost = sum(t["shares"] * t["price_per_share"] for t in tts
+                       if t["action"] in ("buy", "add"))
+            proceeds = sum(t["shares"] * t["price_per_share"] for t in tts
+                           if t["action"] in ("sell", "trim"))
+            held = sum(t["shares"] if t["action"] in ("buy", "add") else -t["shares"]
+                       for t in tts)
+            current = prices.get(ticker)
+            if held < -1e-9:
+                # proceeds of unrecorded shares would read as pure profit
+                reason = "sells exceed recorded buys (position predates trade log)"
+            elif not cost:
+                reason = "no recorded buys"
+            elif held > 1e-9 and not current:
+                reason = "current price unavailable"
+            else:
+                value = held * current if held > 1e-9 else 0.0
+                pnl_usd = round(value + proceeds - cost, 2)
+                pnl_pct = round(pnl_usd / cost * 100, 2)
+
+        out.append({"ticker": ticker, "pnl_usd": pnl_usd, "pnl_pct": pnl_pct,
+                    "reason": reason, "alignment_counts": counts,
+                    "n_trades": len(tts)})
+    out.sort(key=lambda d: (d["pnl_usd"] is None, -(d["pnl_usd"] or 0)))
+    return out
+
+
 def build_per_ticker(
     portfolio: dict,
     candidates: dict,
@@ -430,15 +611,250 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
 .event-item:last-child { border-bottom: none; }
 .event-type { font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
 
+/* P&L tab */
+.kpi-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat-tile { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px;
+             padding: 12px 16px; flex: 1; min-width: 160px; }
+.stat-tile .label { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.stat-tile .value { font-size: 24px; font-weight: 600; color: #f1f5f9; }
+.stat-tile .delta { font-size: 12px; margin-top: 2px; }
+.chart-card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px;
+              padding: 14px; margin-bottom: 16px; position: relative; }
+.chart-legend { display: flex; gap: 16px; margin-bottom: 8px; font-size: 12px;
+                color: #94a3b8; }
+.chart-legend .key { display: inline-block; width: 14px; height: 2px;
+                     vertical-align: middle; margin-right: 6px; border-radius: 1px; }
+.chart-tooltip { position: absolute; pointer-events: none; background: #232842;
+                 border: 1px solid #3d4166; border-radius: 6px; padding: 8px 10px;
+                 font-size: 12px; display: none; z-index: 5; min-width: 150px;
+                 box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.chart-tooltip .tt-date { color: #64748b; font-size: 11px; margin-bottom: 4px; }
+.chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px;
+                         padding: 1px 0; }
+.chart-tooltip .tt-label { color: #94a3b8; }
+.chart-tooltip .tt-val { font-weight: 600; color: #f1f5f9;
+                         font-variant-numeric: tabular-nums; }
+.muted-note { color: #64748b; font-size: 12px; padding: 8px 0; }
+svg text { font-family: inherit; }
+.axis-tick { font-size: 10px; fill: #64748b; font-variant-numeric: tabular-nums; }
+.bar-label { font-size: 11px; fill: #e2e8f0; font-variant-numeric: tabular-nums; }
+.bar-ticker { font-size: 11px; fill: #94a3b8; font-weight: 600; }
+
 """
 
 JS = """
+let pnlRendered = false;
 function showTab(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelector('[data-tab="' + id + '"]').classList.add('active');
+  if (id === 'view-pnl' && !pnlRendered) { renderPnlTab(); pnlRendered = true; }
 }
+
+// ---------------------------------------------------------------------------
+// P&L tab
+// ---------------------------------------------------------------------------
+const C_VALUE = '#3987e5', C_CONTEXT = '#64748b', C_GAIN = '#199e70', C_LOSS = '#e5484d';
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const fmtUsd = (v, compact) => {
+  const sign = v < 0 ? '-' : '';
+  const a = Math.abs(v);
+  if (compact && a >= 1e6) return sign + '$' + (a/1e6).toFixed(1) + 'M';
+  if (compact && a >= 1e3) return sign + '$' + (a/1e3).toFixed(1) + 'K';
+  return sign + '$' + a.toLocaleString(undefined, {maximumFractionDigits: 0});
+};
+const fmtSigned = v => (v >= 0 ? '+' : '') + fmtUsd(v, true).replace(/^-/, '-');
+
+function niceTicks(min, max, n) {
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const step0 = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
+  // floor/ceil so the tick range fully covers the data — ticks double as the domain
+  const ticks = [];
+  for (let v = Math.floor(min / step) * step; v <= Math.ceil(max / step) * step + step * 1e-9; v += step) ticks.push(v);
+  return ticks;
+}
+
+function renderPnlTab() {
+  renderValueChart();
+  renderDriversChart();
+}
+
+function renderValueChart() {
+  const card = document.getElementById('pnl-value-card');
+  const s = DATA.pnl_series.series;
+  const excluded = DATA.pnl_series.excluded || [];
+  const note = excluded.length
+    ? `<div class="muted-note">Excluded: ${excluded.map(e => esc(e.ticker) + ' (' + esc(e.reason) + ')').join(', ')}</div>` : '';
+  if (!s || s.length < 2) {
+    card.insertAdjacentHTML('beforeend',
+      '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>' + note);
+    return;
+  }
+  const W = Math.max(card.clientWidth - 28, 320), H = 260;
+  const M = {top: 14, right: 74, bottom: 26, left: 56};
+  const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
+  const ymin = Math.min(...s.map(d => Math.min(d.value, d.invested)));
+  const ymax = Math.max(...s.map(d => Math.max(d.value, d.invested)));
+  const ticks = niceTicks(ymin, ymax, 5);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const x = i => M.left + (s.length === 1 ? pw / 2 : i / (s.length - 1) * pw);
+  const y = v => M.top + ph - (v - y0) / (y1 - y0) * ph;
+
+  const grid = ticks.map(t =>
+    `<line x1="${M.left}" y1="${y(t)}" x2="${M.left + pw}" y2="${y(t)}" stroke="#262b40" stroke-width="1"/>
+     <text class="axis-tick" x="${M.left - 8}" y="${y(t) + 3}" text-anchor="end">${fmtUsd(t, true)}</text>`).join('');
+  const nx = Math.min(5, s.length);
+  const xlabels = Array.from({length: nx}, (_, k) => {
+    const i = Math.round(k * (s.length - 1) / Math.max(nx - 1, 1));
+    return `<text class="axis-tick" x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(s[i].date.slice(5))}</text>`;
+  }).join('');
+
+  const path = key => s.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[key]).toFixed(1)).join(' ');
+  const last = s[s.length - 1];
+  const area = path('value') + ` L ${x(s.length - 1).toFixed(1)} ${M.top + ph} L ${M.left} ${M.top + ph} Z`;
+  // direct end-labels — only when the two endpoints separate enough to read
+  const sep = Math.abs(y(last.value) - y(last.invested)) >= 14;
+  const endLabel = (v, txt, color) => sep
+    ? `<text x="${x(s.length-1) + 8}" y="${y(v) + 3}" font-size="11" fill="#e2e8f0">${txt}</text>` : '';
+
+  card.insertAdjacentHTML('beforeend', `
+    <div class="chart-legend">
+      <span><span class="key" style="background:${C_VALUE}"></span>Portfolio value</span>
+      <span><span class="key" style="background:${C_CONTEXT}"></span>Net invested</span>
+    </div>
+    <svg width="${W}" height="${H}" role="img" aria-label="Portfolio value vs net invested over time">
+      ${grid}${xlabels}
+      <path d="${area}" fill="${C_VALUE}" opacity="0.1"/>
+      <path d="${path('invested')}" fill="none" stroke="${C_CONTEXT}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="${path('value')}" fill="none" stroke="${C_VALUE}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(s.length-1)}" cy="${y(last.invested)}" r="4" fill="${C_CONTEXT}" stroke="#1a1d2e" stroke-width="2"/>
+      <circle cx="${x(s.length-1)}" cy="${y(last.value)}" r="4" fill="${C_VALUE}" stroke="#1a1d2e" stroke-width="2"/>
+      ${endLabel(last.value, fmtUsd(last.value, true), C_VALUE)}
+      ${endLabel(last.invested, fmtUsd(last.invested, true), C_CONTEXT)}
+      <line id="pnl-crosshair" y1="${M.top}" y2="${M.top + ph}" stroke="#3d4166" stroke-width="1" visibility="hidden"/>
+      <rect x="${M.left}" y="${M.top}" width="${pw}" height="${ph}" fill="transparent" id="pnl-hover"/>
+    </svg>
+    <div class="chart-tooltip" id="pnl-tt"></div>` + note);
+
+  const svgEl = card.querySelector('svg');
+  const hover = document.getElementById('pnl-hover');
+  const cross = document.getElementById('pnl-crosshair');
+  const tt = document.getElementById('pnl-tt');
+  hover.addEventListener('pointermove', ev => {
+    const rect = svgEl.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    const i = Math.max(0, Math.min(s.length - 1, Math.round((px - M.left) / pw * (s.length - 1))));
+    const d = s[i];
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+    cross.setAttribute('visibility', 'visible');
+    const pnl = d.value - d.invested;
+    tt.innerHTML = `<div class="tt-date">${esc(d.date)}</div>
+      <div class="tt-row"><span class="tt-label"><span class="key" style="background:${C_VALUE};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>Value</span><span class="tt-val">${fmtUsd(d.value)}</span></div>
+      <div class="tt-row"><span class="tt-label"><span class="key" style="background:${C_CONTEXT};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>Invested</span><span class="tt-val">${fmtUsd(d.invested)}</span></div>
+      <div class="tt-row"><span class="tt-label">P&amp;L</span><span class="tt-val ${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(pnl >= 0 ? '+' : '') + fmtUsd(pnl)}</span></div>`;
+    tt.style.display = 'block';
+    const cardRect = card.getBoundingClientRect();
+    const ttx = Math.min(ev.clientX - cardRect.left + 14, card.clientWidth - tt.offsetWidth - 8);
+    tt.style.left = ttx + 'px';
+    tt.style.top = (ev.clientY - cardRect.top + 14) + 'px';
+  });
+  hover.addEventListener('pointerleave', () => {
+    cross.setAttribute('visibility', 'hidden'); tt.style.display = 'none';
+  });
+
+  // KPI tiles from the latest point
+  const pnl = last.value - last.invested;
+  const pct = last.invested ? pnl / last.invested * 100 : null;
+  document.getElementById('kpi-value').textContent = fmtUsd(last.value);
+  document.getElementById('kpi-invested').textContent = fmtUsd(last.invested);
+  const kp = document.getElementById('kpi-pnl');
+  kp.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
+  kp.className = 'value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+  if (pct != null) {
+    const kd = document.getElementById('kpi-pnl-delta');
+    kd.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% on net invested';
+    kd.className = 'delta ' + (pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+  }
+}
+
+function renderDriversChart() {
+  const card = document.getElementById('pnl-drivers-card');
+  const all = DATA.pnl_drivers || [];
+  const rows = all.filter(d => d.pnl_usd != null);
+  const skipped = all.filter(d => d.pnl_usd == null);
+  const note = skipped.length
+    ? `<div class="muted-note">No P&amp;L computed for: ${skipped.map(d => esc(d.ticker) + ' (' + esc(d.reason || '?') + ')').join(', ')}</div>` : '';
+  if (!rows.length) {
+    card.insertAdjacentHTML('beforeend', '<div class="muted-note">No tickers with computable P&amp;L yet.</div>' + note);
+    return;
+  }
+  const W = Math.max(card.clientWidth - 28, 320);
+  const band = 30, barH = 18;
+  const vmin = Math.min(0, ...rows.map(d => d.pnl_usd));
+  const vmax = Math.max(0, ...rows.map(d => d.pnl_usd));
+  // extra left padding so a negative bar's outside-end label clears the ticker gutter
+  const M = {top: 6, right: 72, bottom: 22, left: 64 + (vmin < 0 ? 64 : 0)};
+  const H = M.top + rows.length * band + M.bottom;
+  const pw = W - M.left - M.right;
+  const x = v => M.left + (v - vmin) / ((vmax - vmin) || 1) * pw;
+  const zero = x(0);
+
+  const bars = rows.map((d, i) => {
+    const yTop = M.top + i * band + (band - barH) / 2;
+    const pos = d.pnl_usd >= 0;
+    const x0 = pos ? zero : x(d.pnl_usd), x1 = pos ? x(d.pnl_usd) : zero;
+    const w = Math.max(x1 - x0, 1);
+    const r = Math.min(4, w);
+    // 4px rounded data-end, square at the zero baseline
+    const path = pos
+      ? `M ${x0} ${yTop} L ${x1 - r} ${yTop} Q ${x1} ${yTop} ${x1} ${yTop + r} L ${x1} ${yTop + barH - r} Q ${x1} ${yTop + barH} ${x1 - r} ${yTop + barH} L ${x0} ${yTop + barH} Z`
+      : `M ${x1} ${yTop} L ${x0 + r} ${yTop} Q ${x0} ${yTop} ${x0} ${yTop + r} L ${x0} ${yTop + barH - r} Q ${x0} ${yTop + barH} ${x0 + r} ${yTop + barH} L ${x1} ${yTop + barH} Z`;
+    const labelX = pos ? x1 + 6 : x0 - 6;
+    const anchor = pos ? 'start' : 'end';
+    return `<g class="driver-row" data-i="${i}">
+      <text class="bar-ticker" x="56" y="${yTop + barH / 2 + 4}" text-anchor="end">${esc(d.ticker)}</text>
+      <path d="${path}" fill="${pos ? C_GAIN : C_LOSS}"/>
+      <text class="bar-label" x="${labelX}" y="${yTop + barH / 2 + 4}" text-anchor="${anchor}">${fmtSigned(d.pnl_usd)}</text>
+      <rect x="0" y="${M.top + i * band}" width="${W}" height="${band}" fill="transparent"/>
+    </g>`;
+  }).join('');
+
+  card.insertAdjacentHTML('beforeend', `
+    <svg width="${W}" height="${H}" role="img" aria-label="P&L by ticker">
+      <line x1="${zero}" y1="${M.top}" x2="${zero}" y2="${H - M.bottom}" stroke="#3d4166" stroke-width="1"/>
+      <text class="axis-tick" x="${zero}" y="${H - 6}" text-anchor="middle">$0</text>
+      ${bars}
+    </svg>
+    <div class="chart-tooltip" id="drivers-tt"></div>` + note);
+
+  const tt = document.getElementById('drivers-tt');
+  card.querySelectorAll('.driver-row').forEach(g => {
+    const d = rows[+g.dataset.i];
+    g.addEventListener('pointermove', ev => {
+      g.querySelector('path').setAttribute('opacity', '0.8');
+      const c = d.alignment_counts;
+      const parts = ['aligned', 'misaligned', 'neutral', 'unlinked']
+        .filter(k => c[k]).map(k => c[k] + ' ' + k).join(' · ');
+      tt.innerHTML = `<div class="tt-date">${esc(d.ticker)} — ${d.n_trades} trade${d.n_trades > 1 ? 's' : ''}</div>
+        <div class="tt-row"><span class="tt-label">Total P&amp;L</span><span class="tt-val ${d.pnl_usd >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(d.pnl_usd >= 0 ? '+' : '') + fmtUsd(d.pnl_usd)}${d.pnl_pct != null ? ' (' + (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct + '%)' : ''}</span></div>
+        <div class="tt-row"><span class="tt-label">Alignment</span><span class="tt-val" style="font-weight:400">${esc(parts) || '—'}</span></div>`;
+      tt.style.display = 'block';
+      const cardRect = card.getBoundingClientRect();
+      const ttx = Math.min(ev.clientX - cardRect.left + 14, card.clientWidth - tt.offsetWidth - 8);
+      tt.style.left = ttx + 'px';
+      tt.style.top = (ev.clientY - cardRect.top + 14) + 'px';
+    });
+    g.addEventListener('pointerleave', () => {
+      g.querySelector('path').removeAttribute('opacity');
+      tt.style.display = 'none';
+    });
+  });
+}
+
 
 // Alignment table sort — default: trade_date asc (col 0), then ticker asc (col 1)
 let sortCol = 0, sortAsc = true;
@@ -636,11 +1052,14 @@ document.addEventListener('DOMContentLoaded', () => {
 """
 
 
-def render_html(timeline: list, alignment_rows: list, per_ticker: dict) -> str:
+def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
+                pnl_series: dict, pnl_drivers: list) -> str:
     data_json = json.dumps({
         "timeline": timeline,
         "alignment_rows": alignment_rows,
         "per_ticker": per_ticker,
+        "pnl_series": pnl_series,
+        "pnl_drivers": pnl_drivers,
     }, default=str)
 
     total = len(alignment_rows)
@@ -662,6 +1081,7 @@ def render_html(timeline: list, alignment_rows: list, per_ticker: dict) -> str:
   <span style="color:#64748b;font-size:13px;margin-right:8px;align-self:center">Prism</span>
   <button class="active" data-tab="view-timeline" onclick="showTab('view-timeline')">Timeline</button>
   <button data-tab="view-alignment" onclick="showTab('view-alignment')">Research → Trade</button>
+  <button data-tab="view-pnl" onclick="showTab('view-pnl')">P&amp;L</button>
   <button data-tab="view-ticker" onclick="showTab('view-ticker')">Per Ticker</button>
   <span style="margin-left:auto;color:#334155;font-size:11px;align-self:center">Generated {generated}</span>
 </nav>
@@ -695,6 +1115,22 @@ def render_html(timeline: list, alignment_rows: list, per_ticker: dict) -> str:
       </thead>
       <tbody id="align-tbody"></tbody>
     </table>
+  </div>
+</div>
+
+<div id="view-pnl" class="view">
+  <h2>P&amp;L</h2>
+  <div class="kpi-row">
+    <div class="stat-tile"><div class="label">Portfolio value</div><div class="value" id="kpi-value">—</div></div>
+    <div class="stat-tile"><div class="label">Net invested</div><div class="value" id="kpi-invested">—</div></div>
+    <div class="stat-tile"><div class="label">Total P&amp;L</div><div class="value" id="kpi-pnl">—</div><div class="delta" id="kpi-pnl-delta"></div></div>
+  </div>
+  <div class="chart-card" id="pnl-value-card">
+    <h3>Portfolio value over time</h3>
+  </div>
+  <div class="chart-card" id="pnl-drivers-card">
+    <h3>P&amp;L drivers by ticker</h3>
+    <div class="muted-note">Per-trade detail (alignment, lot P&amp;L) lives in the Research → Trade tab.</div>
   </div>
 </div>
 
@@ -732,14 +1168,23 @@ def main():
         print(f"Fetching current prices for: {', '.join(sorted(priced_tickers))}")
     prices = fetch_current_prices(priced_tickers)
 
+    # Daily price history for the P&L value chart (only fully-priced tickers)
+    first_trade_date = min((t["date"] for t in trades if t.get("date")), default=None)
+    history_tickers = {t["ticker"] for t in trades if t.get("shares") and t.get("price_per_share")}
+    if history_tickers and first_trade_date:
+        print(f"Fetching price history since {first_trade_date} for: {', '.join(sorted(history_tickers))}")
+    history = fetch_price_history(history_tickers, first_trade_date) if first_trade_date else {}
+
     verdict_lookup = build_verdict_lookup(portfolio, candidates)
     timeline = build_timeline(runs, trades, journal, verdict_lookup)
     alignment = build_alignment(trades, verdict_lookup, prices)
     per_ticker = build_per_ticker(portfolio, candidates, trades, prices)
+    pnl_series = build_value_series(trades, history)
+    pnl_drivers = build_pnl_drivers(trades, prices, alignment)
 
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     out = DASHBOARD_DIR / "index.html"
-    out.write_text(render_html(timeline, alignment, per_ticker))
+    out.write_text(render_html(timeline, alignment, per_ticker, pnl_series, pnl_drivers))
 
     print(f"Dashboard written to {out}")
     print(f"  {len(runs)} research runs  |  {len(trades)} trades  |  {len(journal)} journal entries  |  {len(per_ticker)} tickers")
