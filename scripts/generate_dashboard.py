@@ -1338,7 +1338,7 @@ def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
   <button data-tab="view-alignment" onclick="showTab('view-alignment')">Research → Trade</button>
   <button data-tab="view-pnl" onclick="showTab('view-pnl')">P&amp;L</button>
   <button data-tab="view-ticker" onclick="showTab('view-ticker')">Per Ticker</button>
-  <span style="margin-left:auto;color:#334155;font-size:11px;align-self:center">{price_sync_label} · Generated {generated}</span>
+  <span style="margin-left:auto;color:#94a3b8;font-size:11px;align-self:center">{price_sync_label} · Generated {generated}</span>
 </nav>
 
 <div id="view-timeline" class="view active">
