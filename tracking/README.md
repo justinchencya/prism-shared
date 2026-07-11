@@ -1,16 +1,19 @@
 # Tracking
 
-Five persistent JSON files that accumulate actionable follow-ups across all Prism research runs.
+Six persistent JSON files that accumulate actionable follow-ups across all Prism research runs.
 
 - **portfolio.json** — tickers you hold: each position carries a `reports[]` array (thesis evolution across runs) and an `events[]` array (buy triggers, falsifiers, event monitors)
 - **candidates.json** — tickers you're watching: user-curated, same schema as portfolio positions. You add tickers manually; research runs populate their `reports[]` and `events[]`.
 - **catalysts.json** — macro/multi-ticker events: regulatory decisions, IPOs, policy changes
 - **trades.json** — log of every individual trade execution written by `/log-trade` (see schema below)
 - **journal.json** — free-form reflections written by `/journal`: each entry carries `text` plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your own thinking (hesitations, imagined scenarios, roads not taken), surfaced in the dashboard timeline.
+- **hypotheticals.json** — what-if scenarios written by `/what-if`: counterfactual trade substitutions, standalone hypothetical portfolios, and single-ticker benchmarks, overlaid on the dashboard P&L chart (see schema below)
+
+(A seventh file, `price-cache.json`, may appear here — a gitignored daily-close cache written by `scripts/generate_dashboard.py`. Pure regenerable optimization, never committed.)
 
 Entries in portfolio.json / candidates.json / catalysts.json are created and updated automatically by the research-director (Phase 8) after each `/research` run — but only for tickers already in portfolio.json or candidates.json. New tickers surfaced in a run appear as `[NEW]` in the final report; you add them to candidates.json manually if you want to track them (or via `/journal` when you link a `[NEW]` ticker to a reflection).
 
-Scout reads portfolio.json, candidates.json, and catalysts.json for context but never writes to them. trades.json and journal.json are read by the dashboard only.
+Scout reads portfolio.json, candidates.json, and catalysts.json for context but never writes to them. trades.json, journal.json, and hypotheticals.json are read by the dashboard only.
 
 ---
 
@@ -265,6 +268,52 @@ Written by `/log-trade`. Each entry is one trade execution.
 | `linked_at` | YYYY-MM-DD | Date the link was made (may differ from trade date for retroactive linking) |
 
 **Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `portfolio.json` or `candidates.json` under `reports[]`.
+
+---
+
+## Schema: hypotheticals.json
+
+Written by `/what-if`. Each scenario is a hypothetical portfolio the dashboard overlays on the P&L value chart. Shares and prices are **not** stored for derived trades — `scripts/generate_dashboard.py` computes them from daily closes at render time (execution proxy: first close on or after the trade date).
+
+```json
+{
+  "last_updated": "YYYY-MM-DD",
+  "scenarios": [
+    {
+      "id": "whatif-20260711-001",
+      "name": "AMD instead of NVDA (2026-03-02)",
+      "status": "active",
+      "type": "substitute",
+      "color_index": 0,
+      "created": "2026-07-11",
+      "note": "optional free text",
+      "overrides": [ { "from": "NVDA", "to": "AMD" } ]
+    }
+  ]
+}
+```
+
+### Scenario fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Stable ID: `whatif-<YYYYMMDD>-<NNN>` (per-day sequence). Never changed. |
+| `name` | string | Short human label — what the dashboard legend and tooltips show. Renameable. |
+| `status` | enum | `"active"` (drawn on the chart) · `"archived"` (kept, not drawn) |
+| `type` | enum | `"substitute"` · `"benchmark"` · `"standalone"` |
+| `color_index` | int | Fixed chart-color slot (0–3), assigned at creation, never reshuffled |
+| `created` | YYYY-MM-DD | Creation date |
+| `note` | string | Optional free text |
+
+### Per-type payload
+
+- **`substitute`** — clones the actual trade log with swaps. `overrides[]` entries are either `{ "from": "<TICKER>", "to": "<TICKER>" }` (swaps every trade in that ticker, buys and sells — preferred) or `{ "trade_id": "<trades.json id>", "ticker": "<TICKER>" }` (swaps one specific trade only). Swapped buys convert the same dollars into the target at its close; swapped sells sell the same *fraction* of the hypothetical position as the original sell took of the real one.
+- **`benchmark`** — `benchmark_ticker: "<TICKER>"`: every actual trade re-executed into that one ticker, same dates and amounts ("what if I'd just bought SPY").
+- **`standalone`** — `trades[]`: an explicit hypothetical trade list, each `{ date, ticker, action, amount_usd }` (or explicit `shares` + `price_per_share`). Recurring plans (DCA) are expanded into explicit dated trades by `/what-if` at creation.
+
+`substitute` and `benchmark` share the actual portfolio's cashflows, so the dashboard and `--whatif-preview` also report the **P&L delta vs actual** (P&L, not end value — sale proceeds differ between the two sides and the invested line nets them out). `standalone` shows only its own P&L.
+
+Everything is computed from daily closes — no intraday fills, dividends, or FX. Directional sanity-checking, not precise P&L.
 
 ---
 

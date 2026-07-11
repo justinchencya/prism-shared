@@ -145,10 +145,11 @@ open dashboard/index.html
 
 Generates a local HTML dashboard from the tracking files. No server required — opens directly in the browser.
 
-**Three views:**
+**Four views:**
 
 - **Timeline** — chronological interleaving of research runs, trades, and journal reflections, showing which research preceded which trade and what you were thinking along the way.
 - **Research → Trade Alignment** — every trade row linked to the research that drove it (from `trades.json`), with alignment classification (aligned / misaligned / unlinked) and lag in days between research and trade.
+- **P&L** — portfolio value vs. net invested over time, per-ticker P&L drivers, and dashed overlay lines for any active `/what-if` scenarios with per-scenario summaries.
 - **Per-Ticker Drilldown** — full research history for a ticker (all runs that covered it, with thesis evolution and verdicts), trade history with shares and price, unrealized P&L vs. current price, and active falsifiers / event monitors.
 
 **Requirements:** `yfinance` (for current prices and P&L). Install via `pip install yfinance` or run `bash setup.sh`.
@@ -207,19 +208,47 @@ Captures a free-form reflection — a hesitation, an imagined scenario, a road n
 
 ---
 
-The five commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted before anything is committed, pushed, or merged.
+## What-if
+
+```
+/what-if <scenario>
+```
+
+Tracks hypothetical portfolios next to your real one on the dashboard's P&L chart — counterfactual comparison of concrete trade histories, not strategy backtesting (daily closes only; no dividends, intraday fills, or rebalancing rules). No research, no Notion.
+
+**How it works:**
+
+1. Parses your scenario into one of three types: **substitute** ("what if I'd bought AMD instead of NVDA?" — clones your trade log with the swap, same dollars on the same dates), **benchmark** ("what if the same money had just gone into SPY?"), or **standalone** (an explicit hypothetical trade list; "$500/month into QQQ since March" expands into dated trades).
+2. Appends the scenario to `hypotheticals.json` and previews it immediately (`scripts/generate_dashboard.py --whatif-preview <id>`): end value, invested, P&L — and for substitute/benchmark, the P&L delta vs your actual portfolio. Daily closes are cached per day (`tracking/price-cache.json`, gitignored) so iterating is cheap.
+3. Lands on its own branch + Pull Request. Active scenarios render as dashed overlay lines on the P&L value chart at the next dashboard regeneration; `archive` / `reactivate` / `rename` are handled by the same command in natural language.
+
+**Output** → `tracking/hypotheticals.json` (and overlay lines + per-scenario summaries in the dashboard)
+
+**Examples:**
+
+```
+/what-if I'd bought AMD instead of NVDA back in March
+/what-if the same money had just gone into SPY
+/what-if a portfolio DCA-ing $500 into QQQ on the 1st of every month since March
+/what-if archive the SPY benchmark
+```
+
+---
+
+The six commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted before anything is committed, pushed, or merged.
 
 ---
 
 ## Tracking
 
-Research runs accumulate a persistent tracking layer across five JSON files in `tracking/`:
+Research runs accumulate a persistent tracking layer across six JSON files in `tracking/`:
 
 - **`portfolio.json`** — tickers you hold: each position carries a `reports[]` array (how the thesis evolved across runs) and an `events[]` array (buy triggers, falsifiers, event monitors to watch)
 - **`candidates.json`** — tickers under consideration: user-curated, same schema. You add tickers manually; research runs populate their `reports[]` and `events[]` for active entries.
 - **`catalysts.json`** — system-level events with expected dates: regulatory decisions, IPOs, macro policy changes
 - **`trades.json`** — log of every individual trade execution: date, ticker, action, amount, shares, price per share, and a `linked_research[]` array pointing to the specific research runs that motivated the trade. Written by `/log-trade`; read by the dashboard for alignment analysis and P&L.
 - **`journal.json`** — free-form reflections from `/journal`: text plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your thinking — hesitations, imagined scenarios, roads not taken — read by the dashboard for the timeline.
+- **`hypotheticals.json`** — what-if scenarios from `/what-if`: trade substitutions, standalone hypothetical portfolios, and benchmarks, read by the dashboard for the P&L chart overlays.
 
 **How it feeds:**
 
