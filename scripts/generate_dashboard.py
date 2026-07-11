@@ -1305,7 +1305,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
-                pnl_series: dict, pnl_drivers: list, whatif: list) -> str:
+                pnl_series: dict, pnl_drivers: list, whatif: list,
+                price_sync: str | None) -> str:
     data_json = json.dumps({
         "timeline": timeline,
         "alignment_rows": alignment_rows,
@@ -1320,6 +1321,7 @@ def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
     aligned = sum(1 for r in alignment_rows if r["alignment"] == "aligned")
     aligned_pct = f"{round(aligned / linked * 100)}%" if linked else "—"
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    price_sync_label = f"Prices synced {price_sync}" if price_sync else "No price data"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1336,7 +1338,7 @@ def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
   <button data-tab="view-alignment" onclick="showTab('view-alignment')">Research → Trade</button>
   <button data-tab="view-pnl" onclick="showTab('view-pnl')">P&amp;L</button>
   <button data-tab="view-ticker" onclick="showTab('view-ticker')">Per Ticker</button>
-  <span style="margin-left:auto;color:#334155;font-size:11px;align-self:center">Generated {generated}</span>
+  <span style="margin-left:auto;color:#334155;font-size:11px;align-self:center">{price_sync_label} · Generated {generated}</span>
 </nav>
 
 <div id="view-timeline" class="view active">
@@ -1491,7 +1493,12 @@ def main():
 
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     out = DASHBOARD_DIR / "index.html"
-    out.write_text(render_html(timeline, alignment, per_ticker, pnl_series, pnl_drivers, whatif))
+    # Any price data present was fetched (or cache-validated) today — the
+    # history cache only hits on fetched_at == today. An empty result means
+    # every fetch failed or there was nothing to price.
+    price_sync = date.today().isoformat() if (prices or history) else None
+    out.write_text(render_html(timeline, alignment, per_ticker, pnl_series, pnl_drivers, whatif,
+                               price_sync))
 
     print(f"Dashboard written to {out}")
     print(f"  {len(runs)} research runs  |  {len(trades)} trades  |  {len(journal)} journal entries  |  "

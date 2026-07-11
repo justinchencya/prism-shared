@@ -87,6 +87,35 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
 .event-item:last-child { border-bottom: none; }
 .event-type { font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
 
+/* P&L tab */
+.kpi-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat-tile { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px;
+             padding: 12px 16px; flex: 1; min-width: 160px; }
+.stat-tile .label { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.stat-tile .value { font-size: 24px; font-weight: 600; color: #f1f5f9; }
+.stat-tile .delta { font-size: 12px; margin-top: 2px; }
+.chart-card { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px;
+              padding: 14px; margin-bottom: 16px; position: relative; }
+.chart-legend { display: flex; gap: 16px; margin-bottom: 8px; font-size: 12px;
+                color: #94a3b8; }
+.chart-legend .key { display: inline-block; width: 14px; height: 2px;
+                     vertical-align: middle; margin-right: 6px; border-radius: 1px; }
+.chart-tooltip { position: absolute; pointer-events: none; background: #232842;
+                 border: 1px solid #3d4166; border-radius: 6px; padding: 8px 10px;
+                 font-size: 12px; display: none; z-index: 5; min-width: 150px;
+                 box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.chart-tooltip .tt-date { color: #64748b; font-size: 11px; margin-bottom: 4px; }
+.chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px;
+                         padding: 1px 0; }
+.chart-tooltip .tt-label { color: #94a3b8; }
+.chart-tooltip .tt-val { font-weight: 600; color: #f1f5f9;
+                         font-variant-numeric: tabular-nums; }
+.muted-note { color: #64748b; font-size: 12px; padding: 8px 0; }
+svg text { font-family: inherit; }
+.axis-tick { font-size: 10px; fill: #64748b; font-variant-numeric: tabular-nums; }
+.bar-label { font-size: 11px; fill: #e2e8f0; font-variant-numeric: tabular-nums; }
+.bar-ticker { font-size: 11px; fill: #94a3b8; font-weight: 600; }
+
 </style>
 </head>
 <body>
@@ -94,8 +123,9 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
   <span style="color:#64748b;font-size:13px;margin-right:8px;align-self:center">Prism</span>
   <button class="active" data-tab="view-timeline" onclick="showTab('view-timeline')">Timeline</button>
   <button data-tab="view-alignment" onclick="showTab('view-alignment')">Research → Trade</button>
+  <button data-tab="view-pnl" onclick="showTab('view-pnl')">P&amp;L</button>
   <button data-tab="view-ticker" onclick="showTab('view-ticker')">Per Ticker</button>
-  <span style="margin-left:auto;color:#334155;font-size:11px;align-self:center">Generated 2026-06-24 22:20</span>
+  <span style="margin-left:auto;color:#334155;font-size:11px;align-self:center">No price data · Generated 2026-07-11 15:23</span>
 </nav>
 
 <div id="view-timeline" class="view active">
@@ -130,6 +160,22 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
   </div>
 </div>
 
+<div id="view-pnl" class="view">
+  <h2>P&amp;L</h2>
+  <div class="kpi-row">
+    <div class="stat-tile"><div class="label">Portfolio value</div><div class="value" id="kpi-value">—</div></div>
+    <div class="stat-tile"><div class="label">Net invested</div><div class="value" id="kpi-invested">—</div></div>
+    <div class="stat-tile"><div class="label">Total P&amp;L</div><div class="value" id="kpi-pnl">—</div><div class="delta" id="kpi-pnl-delta"></div></div>
+  </div>
+  <div class="chart-card" id="pnl-value-card">
+    <h3>Portfolio value over time</h3>
+  </div>
+  <div class="chart-card" id="pnl-drivers-card">
+    <h3>P&amp;L drivers by ticker</h3>
+    <div class="muted-note">Per-trade detail (alignment, lot P&amp;L) lives in the Research → Trade tab.</div>
+  </div>
+</div>
+
 <div id="view-ticker" class="view">
   <h2>Per-Ticker Drilldown</h2>
   <select class="ticker-select" id="ticker-select">
@@ -138,14 +184,278 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
   <div id="ticker-panel"></div>
 </div>
 
-<script>const DATA = {"timeline": [], "alignment_rows": [], "per_ticker": {}};</script>
+<script>const DATA = {"timeline": [], "alignment_rows": [], "per_ticker": {}, "pnl_series": {"series": [], "excluded": []}, "pnl_drivers": [], "whatif": []};</script>
 <script>
+let pnlRendered = false;
 function showTab(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelector('[data-tab="' + id + '"]').classList.add('active');
+  if (id === 'view-pnl' && !pnlRendered) { renderPnlTab(); pnlRendered = true; }
 }
+
+// ---------------------------------------------------------------------------
+// P&L tab
+// ---------------------------------------------------------------------------
+const C_VALUE = '#3987e5', C_CONTEXT = '#64748b', C_GAIN = '#199e70', C_LOSS = '#e5484d';
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const fmtUsd = (v, compact) => {
+  const sign = v < 0 ? '-' : '';
+  const a = Math.abs(v);
+  if (compact && a >= 1e6) return sign + '$' + (a/1e6).toFixed(1) + 'M';
+  if (compact && a >= 1e3) return sign + '$' + (a/1e3).toFixed(1) + 'K';
+  return sign + '$' + a.toLocaleString(undefined, {maximumFractionDigits: 0});
+};
+const fmtSigned = v => (v >= 0 ? '+' : '') + fmtUsd(v, true).replace(/^-/, '-');
+
+function niceTicks(min, max, n) {
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const step0 = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
+  // floor/ceil so the tick range fully covers the data — ticks double as the domain
+  const ticks = [];
+  for (let v = Math.floor(min / step) * step; v <= Math.ceil(max / step) * step + step * 1e-9; v += step) ticks.push(v);
+  return ticks;
+}
+
+function renderPnlTab() {
+  renderValueChart();
+  renderDriversChart();
+}
+
+function renderValueChart() {
+  const card = document.getElementById('pnl-value-card');
+  const s = DATA.pnl_series.series || [];
+  const excluded = DATA.pnl_series.excluded || [];
+  const hasActual = s.length >= 2;
+  const scen = (DATA.whatif || []).filter(w => w.series && w.series.length >= 2);
+  const scenWarn = scen.flatMap(w => (w.warnings || []).map(m => esc(w.name) + ': ' + esc(m)));
+  let note = excluded.length
+    ? `<div class="muted-note">Excluded: ${excluded.map(e => esc(e.ticker) + ' (' + esc(e.reason) + ')').join(', ')}</div>` : '';
+  if (scenWarn.length) note += `<div class="muted-note">What-if notes: ${scenWarn.join(' · ')}</div>`;
+  if (!hasActual && !scen.length) {
+    card.insertAdjacentHTML('beforeend',
+      '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>' + note);
+    return;
+  }
+  // x-domain: the actual portfolio's calendar; hypotheticals-only fallback
+  const base = hasActual ? s : scen.reduce((a, w) => (w.series.length > a.length ? w.series : a), scen[0].series);
+  const idx = {};
+  base.forEach((d, i) => { idx[d.date] = i; });
+  // scenario lines drawn only where they share the x-domain calendar
+  const scenView = scen
+    .map(w => ({...w, pts: w.series.filter(p => idx[p.date] != null)}))
+    .filter(v => v.pts.length >= 2);
+
+  const W = Math.max(card.clientWidth - 28, 320), H = 260;
+  const M = {top: 14, right: 74, bottom: 26, left: 56};
+  const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
+  const vals = [];
+  if (hasActual) s.forEach(d => vals.push(d.value, d.invested));
+  scenView.forEach(v => v.pts.forEach(p => vals.push(p.value)));
+  const ticks = niceTicks(Math.min(...vals), Math.max(...vals), 5);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const x = i => M.left + (base.length === 1 ? pw / 2 : i / (base.length - 1) * pw);
+  const y = v => M.top + ph - (v - y0) / (y1 - y0) * ph;
+
+  const grid = ticks.map(t =>
+    `<line x1="${M.left}" y1="${y(t)}" x2="${M.left + pw}" y2="${y(t)}" stroke="#262b40" stroke-width="1"/>
+     <text class="axis-tick" x="${M.left - 8}" y="${y(t) + 3}" text-anchor="end">${fmtUsd(t, true)}</text>`).join('');
+  const nx = Math.min(5, base.length);
+  const xlabels = Array.from({length: nx}, (_, k) => {
+    const i = Math.round(k * (base.length - 1) / Math.max(nx - 1, 1));
+    return `<text class="axis-tick" x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(base[i].date.slice(5))}</text>`;
+  }).join('');
+
+  const path = key => s.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[key]).toFixed(1)).join(' ');
+  const last = hasActual ? s[s.length - 1] : null;
+  let actualSvg = '', endLabels = '';
+  if (hasActual) {
+    const area = path('value') + ` L ${x(s.length - 1).toFixed(1)} ${M.top + ph} L ${M.left} ${M.top + ph} Z`;
+    actualSvg = `
+      <path d="${area}" fill="${C_VALUE}" opacity="0.1"/>
+      <path d="${path('invested')}" fill="none" stroke="${C_CONTEXT}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="${path('value')}" fill="none" stroke="${C_VALUE}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(s.length-1)}" cy="${y(last.invested)}" r="4" fill="${C_CONTEXT}" stroke="#1a1d2e" stroke-width="2"/>
+      <circle cx="${x(s.length-1)}" cy="${y(last.value)}" r="4" fill="${C_VALUE}" stroke="#1a1d2e" stroke-width="2"/>`;
+    // direct end-labels — only when the two endpoints separate enough to read
+    const sep = Math.abs(y(last.value) - y(last.invested)) >= 14;
+    const endLabel = (v, txt) => sep
+      ? `<text x="${x(s.length-1) + 8}" y="${y(v) + 3}" font-size="11" fill="#e2e8f0">${txt}</text>` : '';
+    endLabels = endLabel(last.value, fmtUsd(last.value, true)) + endLabel(last.invested, fmtUsd(last.invested, true));
+  }
+  // hypothetical lines: dashed (shape distinguishes them from the actual, not
+  // just hue), each with an end dot at its last in-domain point
+  const scenSvg = scenView.map(v => {
+    const p = v.pts.map((pt, k) => (k ? 'L' : 'M') + x(idx[pt.date]).toFixed(1) + ' ' + y(pt.value).toFixed(1)).join(' ');
+    const lp = v.pts[v.pts.length - 1];
+    return `<path d="${p}" fill="none" stroke="${v.color}" stroke-width="2" stroke-dasharray="5 3" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(idx[lp.date])}" cy="${y(lp.value)}" r="4" fill="${v.color}" stroke="#1a1d2e" stroke-width="2"/>`;
+  }).join('');
+
+  const legend = [
+    ...(hasActual ? [
+      `<span><span class="key" style="background:${C_VALUE}"></span>Portfolio value</span>`,
+      `<span><span class="key" style="background:${C_CONTEXT}"></span>Net invested</span>`] : []),
+    ...scenView.map(v => `<span><span class="key" style="background:repeating-linear-gradient(90deg,${v.color} 0 5px,transparent 5px 8px)"></span>${esc(v.name)}</span>`),
+  ].join('');
+
+  // per-scenario summary: end value, own P&L, and — when the cashflows match
+  // the actual portfolio's (substitute/benchmark) — the P&L delta vs actual
+  // (P&L, not end value: sale proceeds differ between the two, and the
+  // invested line already nets them out on both sides)
+  const summary = scenView.map(v => {
+    const lp = v.series[v.series.length - 1];
+    const pnl = lp.value - lp.invested;
+    const vsActual = (v.comparable && last) ? ` · vs actual P&amp;L ${fmtSigned(pnl - (last.value - last.invested))}` : '';
+    return `<div class="muted-note"><span class="key" style="background:${v.color};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:6px"></span>${esc(v.name)}: ${fmtUsd(lp.value, true)} (P&amp;L ${fmtSigned(pnl)}${vsActual})</div>`;
+  }).join('');
+
+  card.insertAdjacentHTML('beforeend', `
+    <div class="chart-legend">${legend}</div>
+    <svg width="${W}" height="${H}" role="img" aria-label="Portfolio value vs net invested over time, with what-if scenario overlays">
+      ${grid}${xlabels}
+      ${actualSvg}
+      ${scenSvg}
+      ${endLabels}
+      <line id="pnl-crosshair" y1="${M.top}" y2="${M.top + ph}" stroke="#3d4166" stroke-width="1" visibility="hidden"/>
+      <rect x="${M.left}" y="${M.top}" width="${pw}" height="${ph}" fill="transparent" id="pnl-hover"/>
+    </svg>
+    <div class="chart-tooltip" id="pnl-tt"></div>` + summary + note);
+
+  const scenMaps = scenView.map(v => {
+    const m = {};
+    v.pts.forEach(p => { m[p.date] = p.value; });
+    return m;
+  });
+  const ttKey = c => `<span class="key" style="background:${c};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>`;
+  const svgEl = card.querySelector('svg');
+  const hover = document.getElementById('pnl-hover');
+  const cross = document.getElementById('pnl-crosshair');
+  const tt = document.getElementById('pnl-tt');
+  hover.addEventListener('pointermove', ev => {
+    const rect = svgEl.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    const i = Math.max(0, Math.min(base.length - 1, Math.round((px - M.left) / pw * (base.length - 1))));
+    const d = base[i];
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+    cross.setAttribute('visibility', 'visible');
+    let rows = '';
+    if (hasActual) {
+      const a = s[i];
+      const pnl = a.value - a.invested;
+      rows += `<div class="tt-row"><span class="tt-label">${ttKey(C_VALUE)}Value</span><span class="tt-val">${fmtUsd(a.value)}</span></div>
+        <div class="tt-row"><span class="tt-label">${ttKey(C_CONTEXT)}Invested</span><span class="tt-val">${fmtUsd(a.invested)}</span></div>
+        <div class="tt-row"><span class="tt-label">P&amp;L</span><span class="tt-val ${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(pnl >= 0 ? '+' : '') + fmtUsd(pnl)}</span></div>`;
+    }
+    scenView.forEach((v, k) => {
+      const val = scenMaps[k][d.date];
+      if (val != null) rows += `<div class="tt-row"><span class="tt-label">${ttKey(v.color)}${esc(v.name)}</span><span class="tt-val">${fmtUsd(val)}</span></div>`;
+    });
+    tt.innerHTML = `<div class="tt-date">${esc(d.date)}</div>` + rows;
+    tt.style.display = 'block';
+    const cardRect = card.getBoundingClientRect();
+    const ttx = Math.min(ev.clientX - cardRect.left + 14, card.clientWidth - tt.offsetWidth - 8);
+    tt.style.left = ttx + 'px';
+    tt.style.top = (ev.clientY - cardRect.top + 14) + 'px';
+  });
+  hover.addEventListener('pointerleave', () => {
+    cross.setAttribute('visibility', 'hidden'); tt.style.display = 'none';
+  });
+
+  // KPI tiles from the latest actual point
+  if (!hasActual) return;
+  const pnl = last.value - last.invested;
+  const pct = last.invested ? pnl / last.invested * 100 : null;
+  document.getElementById('kpi-value').textContent = fmtUsd(last.value);
+  document.getElementById('kpi-invested').textContent = fmtUsd(last.invested);
+  const kp = document.getElementById('kpi-pnl');
+  kp.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
+  kp.className = 'value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+  if (pct != null) {
+    const kd = document.getElementById('kpi-pnl-delta');
+    kd.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% on net invested';
+    kd.className = 'delta ' + (pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+  }
+}
+
+function renderDriversChart() {
+  const card = document.getElementById('pnl-drivers-card');
+  const all = DATA.pnl_drivers || [];
+  const rows = all.filter(d => d.pnl_usd != null);
+  const skipped = all.filter(d => d.pnl_usd == null);
+  const note = skipped.length
+    ? `<div class="muted-note">No P&amp;L computed for: ${skipped.map(d => esc(d.ticker) + ' (' + esc(d.reason || '?') + ')').join(', ')}</div>` : '';
+  if (!rows.length) {
+    card.insertAdjacentHTML('beforeend', '<div class="muted-note">No tickers with computable P&amp;L yet.</div>' + note);
+    return;
+  }
+  const W = Math.max(card.clientWidth - 28, 320);
+  const band = 30, barH = 18;
+  const vmin = Math.min(0, ...rows.map(d => d.pnl_usd));
+  const vmax = Math.max(0, ...rows.map(d => d.pnl_usd));
+  // extra left padding so a negative bar's outside-end label clears the ticker gutter
+  const M = {top: 6, right: 72, bottom: 22, left: 64 + (vmin < 0 ? 64 : 0)};
+  const H = M.top + rows.length * band + M.bottom;
+  const pw = W - M.left - M.right;
+  const x = v => M.left + (v - vmin) / ((vmax - vmin) || 1) * pw;
+  const zero = x(0);
+
+  const bars = rows.map((d, i) => {
+    const yTop = M.top + i * band + (band - barH) / 2;
+    const pos = d.pnl_usd >= 0;
+    const x0 = pos ? zero : x(d.pnl_usd), x1 = pos ? x(d.pnl_usd) : zero;
+    const w = Math.max(x1 - x0, 1);
+    const r = Math.min(4, w);
+    // 4px rounded data-end, square at the zero baseline
+    const path = pos
+      ? `M ${x0} ${yTop} L ${x1 - r} ${yTop} Q ${x1} ${yTop} ${x1} ${yTop + r} L ${x1} ${yTop + barH - r} Q ${x1} ${yTop + barH} ${x1 - r} ${yTop + barH} L ${x0} ${yTop + barH} Z`
+      : `M ${x1} ${yTop} L ${x0 + r} ${yTop} Q ${x0} ${yTop} ${x0} ${yTop + r} L ${x0} ${yTop + barH - r} Q ${x0} ${yTop + barH} ${x0 + r} ${yTop + barH} L ${x1} ${yTop + barH} Z`;
+    const labelX = pos ? x1 + 6 : x0 - 6;
+    const anchor = pos ? 'start' : 'end';
+    return `<g class="driver-row" data-i="${i}">
+      <text class="bar-ticker" x="56" y="${yTop + barH / 2 + 4}" text-anchor="end">${esc(d.ticker)}</text>
+      <path d="${path}" fill="${pos ? C_GAIN : C_LOSS}"/>
+      <text class="bar-label" x="${labelX}" y="${yTop + barH / 2 + 4}" text-anchor="${anchor}">${fmtSigned(d.pnl_usd)}</text>
+      <rect x="0" y="${M.top + i * band}" width="${W}" height="${band}" fill="transparent"/>
+    </g>`;
+  }).join('');
+
+  card.insertAdjacentHTML('beforeend', `
+    <svg width="${W}" height="${H}" role="img" aria-label="P&L by ticker">
+      <line x1="${zero}" y1="${M.top}" x2="${zero}" y2="${H - M.bottom}" stroke="#3d4166" stroke-width="1"/>
+      <text class="axis-tick" x="${zero}" y="${H - 6}" text-anchor="middle">$0</text>
+      ${bars}
+    </svg>
+    <div class="chart-tooltip" id="drivers-tt"></div>` + note);
+
+  const tt = document.getElementById('drivers-tt');
+  card.querySelectorAll('.driver-row').forEach(g => {
+    const d = rows[+g.dataset.i];
+    g.addEventListener('pointermove', ev => {
+      g.querySelector('path').setAttribute('opacity', '0.8');
+      const c = d.alignment_counts;
+      const parts = ['aligned', 'misaligned', 'neutral', 'unlinked']
+        .filter(k => c[k]).map(k => c[k] + ' ' + k).join(' · ');
+      tt.innerHTML = `<div class="tt-date">${esc(d.ticker)} — ${d.n_trades} trade${d.n_trades > 1 ? 's' : ''}</div>
+        <div class="tt-row"><span class="tt-label">Total P&amp;L</span><span class="tt-val ${d.pnl_usd >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(d.pnl_usd >= 0 ? '+' : '') + fmtUsd(d.pnl_usd)}${d.pnl_pct != null ? ' (' + (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct + '%)' : ''}</span></div>
+        <div class="tt-row"><span class="tt-label">Alignment</span><span class="tt-val" style="font-weight:400">${esc(parts) || '—'}</span></div>`;
+      tt.style.display = 'block';
+      const cardRect = card.getBoundingClientRect();
+      const ttx = Math.min(ev.clientX - cardRect.left + 14, card.clientWidth - tt.offsetWidth - 8);
+      tt.style.left = ttx + 'px';
+      tt.style.top = (ev.clientY - cardRect.top + 14) + 'px';
+    });
+    g.addEventListener('pointerleave', () => {
+      g.querySelector('path').removeAttribute('opacity');
+      tt.style.display = 'none';
+    });
+  });
+}
+
 
 // Alignment table sort — default: trade_date asc (col 0), then ticker asc (col 1)
 let sortCol = 0, sortAsc = true;
@@ -176,7 +486,7 @@ function renderAlignmentRows(rows) {
       const pos = r.pnl_pct >= 0;
       const cls = pos ? 'pnl-positive' : 'pnl-negative';
       const sign = pos ? '+' : '';
-      const usd = r.pnl_usd != null ? ` <span style="color:#64748b;font-size:11px">(${r.pnl_usd >= 0 ? '+' : ''}$${Math.abs(r.pnl_usd).toLocaleString(undefined,{maximumFractionDigits:0})})</span>` : '';
+      const usd = r.pnl_usd != null ? ` <span style="color:#64748b;font-size:11px">(${r.pnl_usd >= 0 ? '+' : '-'}$${Math.abs(r.pnl_usd).toLocaleString(undefined,{maximumFractionDigits:0})})</span>` : '';
       pnlHtml = `<span class="${cls}">${sign}${r.pnl_pct}%</span>${usd}`;
     }
     return `
@@ -317,7 +627,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
     const totalPnlPct = totalCost ? totalPnlUsd / totalCost * 100 : null;
-    const usdSign = totalPnlUsd >= 0 ? '+' : '';
+    const usdSign = totalPnlUsd >= 0 ? '+' : '-';
     const cls = totalPnlUsd >= 0 ? 'pnl-positive' : 'pnl-negative';
     const usdEl = document.getElementById('stat-pnl-usd');
     const pctEl = document.getElementById('stat-pnl-pct');
