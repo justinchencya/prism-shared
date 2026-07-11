@@ -47,6 +47,11 @@ def load_journal() -> list:
     return data.get("entries", [])
 
 
+def load_hypotheticals() -> list:
+    data = load_json(TRACKING_DIR / "hypotheticals.json", {"scenarios": []})
+    return data.get("scenarios", [])
+
+
 def _parse_frontmatter(text: str) -> dict:
     """Parse simple YAML frontmatter (key: value lines only)."""
     result = {}
@@ -153,28 +158,61 @@ def fetch_current_prices(tickers: set) -> dict:
     return prices
 
 
+PRICE_CACHE_PATH = TRACKING_DIR / "price-cache.json"
+
+
+def _load_price_cache() -> dict:
+    cache = load_json(PRICE_CACHE_PATH, {})
+    return cache if isinstance(cache, dict) else {}
+
+
+def _save_price_cache(cache: dict) -> None:
+    try:
+        PRICE_CACHE_PATH.write_text(json.dumps(cache))
+    except OSError:
+        pass  # cache is an optimization; never fail the run over it
+
+
 def fetch_price_history(tickers: set, start_date: str) -> dict:
     """Daily closes per ticker from Yahoo's chart API, start_date → today.
 
     Returns {ticker: {"YYYY-MM-DD": close}}. Same requests-based path (and
     proxy behavior) as fetch_current_prices; any ticker that fails is simply
     absent and the P&L chart degrades to a note.
+
+    A per-ticker cache (tracking/price-cache.json, gitignored) skips the fetch
+    when the ticker was already pulled today over a wide-enough range. Cache
+    hits are all-or-nothing per ticker — Yahoo returns split/dividend-adjusted
+    closes, so appending to a stale series would silently mix adjustment bases;
+    a stale ticker is refetched whole instead.
     """
     if not tickers or not start_date:
         return {}
+    today = date.today().isoformat()
+    cache = _load_price_cache()
+    history = {}
+    to_fetch = []
+    for ticker in tickers:
+        entry = cache.get(ticker)
+        if (isinstance(entry, dict) and entry.get("fetched_at") == today
+                and entry.get("start", "9999") <= start_date and entry.get("closes")):
+            history[ticker] = entry["closes"]
+        else:
+            to_fetch.append(ticker)
+    if not to_fetch:
+        return history
     try:
         import requests
     except ImportError:
-        return {}
+        return history
     try:
         # small buffer before the first trade so the first point has a close
         p1 = int(datetime.fromisoformat(start_date).timestamp()) - 7 * 86400
     except ValueError:
-        return {}
+        return history
     p2 = int(time.time()) + 86400
     headers = {"User-Agent": "Mozilla/5.0"}
-    history = {}
-    for ticker in tickers:
+    for ticker in to_fetch:
         symbol = YAHOO_SYMBOL_ALIASES.get(ticker, ticker)
         url = (
             "https://query1.finance.yahoo.com/v8/finance/chart/"
@@ -194,8 +232,11 @@ def fetch_price_history(tickers: set, start_date: str) -> dict:
                     series[day] = float(close)
             if series:
                 history[ticker] = series
+                cache[ticker] = {"fetched_at": today, "start": start_date,
+                                 "closes": series}
         except Exception:
             pass
+    _save_price_cache(cache)
     return history
 
 
@@ -431,6 +472,159 @@ def build_value_series(trades: list, history: dict) -> dict:
             series.append({"date": d, "value": round(value, 2),
                            "invested": round(invested, 2)})
     return {"series": series, "excluded": excluded}
+
+
+# ---------------------------------------------------------------------------
+# What-if scenarios (tracking/hypotheticals.json, written by /what-if)
+# ---------------------------------------------------------------------------
+
+# Categorical slots for scenario lines, validated against the dark surface
+# alongside the actual-portfolio blue. Green/red stay reserved for gain/loss.
+SCENARIO_COLORS = ["#c98500", "#9085e9", "#d95926", "#d55181"]
+
+
+def close_on_or_after(series: dict, day: str) -> float | None:
+    """Execution-price proxy for a hypothetical trade dated `day`: the first
+    close on or after it (a closed market can't fill), else the last close."""
+    days = sorted(series)
+    for d in days:
+        if d >= day:
+            return series[d]
+    return series[days[-1]] if days else None
+
+
+def scenario_needed_tickers(scenarios: list) -> set:
+    """Tickers whose price history the scenarios need beyond the actual set."""
+    need = set()
+    for sc in scenarios:
+        stype = sc.get("type")
+        if stype == "benchmark" and sc.get("benchmark_ticker"):
+            need.add(sc["benchmark_ticker"])
+        elif stype == "standalone":
+            need.update(t["ticker"] for t in sc.get("trades", []) if t.get("ticker"))
+        elif stype == "substitute":
+            for o in sc.get("overrides", []):
+                tk = o.get("ticker") or o.get("to")
+                if tk:
+                    need.add(tk)
+    return need
+
+
+def resolve_scenario_trades(scenario: dict, actual_trades: list, history: dict) -> tuple:
+    """Expand a scenario into a synthetic trade list build_value_series accepts.
+
+    Returns (trades, warnings). A swapped buy converts the same dollars into
+    the target ticker at its close on/after the trade date. A swapped sell
+    sells the same *fraction* of the hypothetical position as the original
+    sell took of the real one — dollar amounts aren't comparable once the two
+    positions have diverged.
+    """
+    warnings = []
+    stype = scenario.get("type")
+
+    if stype == "standalone":
+        out = []
+        for i, t in enumerate(sorted(scenario.get("trades", []), key=lambda t: t.get("date", ""))):
+            tk, day = t.get("ticker"), t.get("date")
+            if not tk or not day:
+                warnings.append(f"trade #{i + 1}: missing ticker/date — skipped")
+                continue
+            shares, price = t.get("shares"), t.get("price_per_share")
+            if not (shares and price):
+                close = close_on_or_after(history.get(tk, {}), day)
+                if close is None:
+                    warnings.append(f"{tk} {day}: no price history — skipped")
+                    continue
+                amount = t.get("amount_usd")
+                if not amount:
+                    warnings.append(f"{tk} {day}: no amount/shares — skipped")
+                    continue
+                price, shares = close, amount / close
+            out.append({"ticker": tk, "date": day,
+                        "action": t.get("action", "buy"),
+                        "shares": shares, "price_per_share": price,
+                        "amount_usd": t.get("amount_usd") or round(shares * price, 2)})
+        return out, warnings
+
+    # substitute / benchmark: derived from the actual trade log
+    if stype == "benchmark":
+        bench = scenario.get("benchmark_ticker")
+        if not bench:
+            return [], ["benchmark scenario has no benchmark_ticker"]
+        def target(t):
+            return bench
+    elif stype == "substitute":
+        by_id, by_ticker = {}, {}
+        for o in scenario.get("overrides", []):
+            if o.get("trade_id"):
+                by_id[o["trade_id"]] = o.get("ticker") or o.get("to")
+            elif o.get("from") and o.get("to"):
+                by_ticker[o["from"]] = o["to"]
+        def target(t):
+            return by_id.get(t.get("id")) or by_ticker.get(t["ticker"]) or t["ticker"]
+    else:
+        return [], [f"unknown scenario type {stype!r}"]
+
+    out = []
+    orig_shares = {}  # running shares per (original, target) swap chain
+    hyp_shares = {}
+    dated = sorted((t for t in actual_trades if t.get("date")), key=lambda t: t["date"])
+    for t in dated:
+        tgt = target(t)
+        if not tgt or tgt == t["ticker"]:
+            out.append(t)
+            continue
+        label = t.get("id") or f"{t['ticker']} {t['date']}"
+        if not (t.get("shares") and t.get("price_per_share")):
+            warnings.append(f"{label}: missing shares/price — kept unswapped")
+            out.append(t)
+            continue
+        close = close_on_or_after(history.get(tgt, {}), t["date"])
+        if close is None:
+            warnings.append(f"{tgt} {t['date']}: no price history — trade skipped")
+            continue
+        key = (t["ticker"], tgt)
+        if t["action"] in ("buy", "add"):
+            amount = t.get("amount_usd") or t["shares"] * t["price_per_share"]
+            sh = amount / close
+            orig_shares[key] = orig_shares.get(key, 0) + t["shares"]
+            hyp_shares[key] = hyp_shares.get(key, 0) + sh
+        else:
+            held = orig_shares.get(key, 0)
+            if held <= 1e-9 or hyp_shares.get(key, 0) <= 1e-9:
+                warnings.append(f"{label}: sell precedes any swapped buy — skipped")
+                continue
+            frac = min(t["shares"] / held, 1.0)
+            sh = frac * hyp_shares[key]
+            orig_shares[key] = held - t["shares"]
+            hyp_shares[key] -= sh
+        out.append({"ticker": tgt, "date": t["date"], "action": t["action"],
+                    "shares": sh, "price_per_share": close,
+                    "amount_usd": round(sh * close, 2)})
+    return out, warnings
+
+
+def build_whatif_series(scenarios: list, actual_trades: list, history: dict) -> list:
+    """Value series per scenario, in the shape the chart overlays expect."""
+    out = []
+    for sc in scenarios:
+        trades, warnings = resolve_scenario_trades(sc, actual_trades, history)
+        vs = build_value_series(trades, history)
+        warnings += [f"{e['ticker']}: {e['reason']}" for e in vs["excluded"]]
+        ci = sc.get("color_index")
+        if ci is None:
+            ci = len(out)
+        out.append({
+            "id": sc.get("id"),
+            "name": sc.get("name") or sc.get("id") or "unnamed scenario",
+            "type": sc.get("type"),
+            # same cashflows as the actual portfolio → end values compare directly
+            "comparable": sc.get("type") in ("substitute", "benchmark"),
+            "color": SCENARIO_COLORS[ci % len(SCENARIO_COLORS)],
+            "series": vs["series"],
+            "warnings": warnings,
+        })
+    return out
 
 
 def build_pnl_drivers(trades: list, prices: dict, alignment_rows: list) -> list:
@@ -685,61 +879,110 @@ function renderPnlTab() {
 
 function renderValueChart() {
   const card = document.getElementById('pnl-value-card');
-  const s = DATA.pnl_series.series;
+  const s = DATA.pnl_series.series || [];
   const excluded = DATA.pnl_series.excluded || [];
-  const note = excluded.length
+  const hasActual = s.length >= 2;
+  const scen = (DATA.whatif || []).filter(w => w.series && w.series.length >= 2);
+  const scenWarn = scen.flatMap(w => (w.warnings || []).map(m => esc(w.name) + ': ' + esc(m)));
+  let note = excluded.length
     ? `<div class="muted-note">Excluded: ${excluded.map(e => esc(e.ticker) + ' (' + esc(e.reason) + ')').join(', ')}</div>` : '';
-  if (!s || s.length < 2) {
+  if (scenWarn.length) note += `<div class="muted-note">What-if notes: ${scenWarn.join(' · ')}</div>`;
+  if (!hasActual && !scen.length) {
     card.insertAdjacentHTML('beforeend',
       '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>' + note);
     return;
   }
+  // x-domain: the actual portfolio's calendar; hypotheticals-only fallback
+  const base = hasActual ? s : scen.reduce((a, w) => (w.series.length > a.length ? w.series : a), scen[0].series);
+  const idx = {};
+  base.forEach((d, i) => { idx[d.date] = i; });
+  // scenario lines drawn only where they share the x-domain calendar
+  const scenView = scen
+    .map(w => ({...w, pts: w.series.filter(p => idx[p.date] != null)}))
+    .filter(v => v.pts.length >= 2);
+
   const W = Math.max(card.clientWidth - 28, 320), H = 260;
   const M = {top: 14, right: 74, bottom: 26, left: 56};
   const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
-  const ymin = Math.min(...s.map(d => Math.min(d.value, d.invested)));
-  const ymax = Math.max(...s.map(d => Math.max(d.value, d.invested)));
-  const ticks = niceTicks(ymin, ymax, 5);
+  const vals = [];
+  if (hasActual) s.forEach(d => vals.push(d.value, d.invested));
+  scenView.forEach(v => v.pts.forEach(p => vals.push(p.value)));
+  const ticks = niceTicks(Math.min(...vals), Math.max(...vals), 5);
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
-  const x = i => M.left + (s.length === 1 ? pw / 2 : i / (s.length - 1) * pw);
+  const x = i => M.left + (base.length === 1 ? pw / 2 : i / (base.length - 1) * pw);
   const y = v => M.top + ph - (v - y0) / (y1 - y0) * ph;
 
   const grid = ticks.map(t =>
     `<line x1="${M.left}" y1="${y(t)}" x2="${M.left + pw}" y2="${y(t)}" stroke="#262b40" stroke-width="1"/>
      <text class="axis-tick" x="${M.left - 8}" y="${y(t) + 3}" text-anchor="end">${fmtUsd(t, true)}</text>`).join('');
-  const nx = Math.min(5, s.length);
+  const nx = Math.min(5, base.length);
   const xlabels = Array.from({length: nx}, (_, k) => {
-    const i = Math.round(k * (s.length - 1) / Math.max(nx - 1, 1));
-    return `<text class="axis-tick" x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(s[i].date.slice(5))}</text>`;
+    const i = Math.round(k * (base.length - 1) / Math.max(nx - 1, 1));
+    return `<text class="axis-tick" x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(base[i].date.slice(5))}</text>`;
   }).join('');
 
   const path = key => s.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[key]).toFixed(1)).join(' ');
-  const last = s[s.length - 1];
-  const area = path('value') + ` L ${x(s.length - 1).toFixed(1)} ${M.top + ph} L ${M.left} ${M.top + ph} Z`;
-  // direct end-labels — only when the two endpoints separate enough to read
-  const sep = Math.abs(y(last.value) - y(last.invested)) >= 14;
-  const endLabel = (v, txt, color) => sep
-    ? `<text x="${x(s.length-1) + 8}" y="${y(v) + 3}" font-size="11" fill="#e2e8f0">${txt}</text>` : '';
-
-  card.insertAdjacentHTML('beforeend', `
-    <div class="chart-legend">
-      <span><span class="key" style="background:${C_VALUE}"></span>Portfolio value</span>
-      <span><span class="key" style="background:${C_CONTEXT}"></span>Net invested</span>
-    </div>
-    <svg width="${W}" height="${H}" role="img" aria-label="Portfolio value vs net invested over time">
-      ${grid}${xlabels}
+  const last = hasActual ? s[s.length - 1] : null;
+  let actualSvg = '', endLabels = '';
+  if (hasActual) {
+    const area = path('value') + ` L ${x(s.length - 1).toFixed(1)} ${M.top + ph} L ${M.left} ${M.top + ph} Z`;
+    actualSvg = `
       <path d="${area}" fill="${C_VALUE}" opacity="0.1"/>
       <path d="${path('invested')}" fill="none" stroke="${C_CONTEXT}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
       <path d="${path('value')}" fill="none" stroke="${C_VALUE}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
       <circle cx="${x(s.length-1)}" cy="${y(last.invested)}" r="4" fill="${C_CONTEXT}" stroke="#1a1d2e" stroke-width="2"/>
-      <circle cx="${x(s.length-1)}" cy="${y(last.value)}" r="4" fill="${C_VALUE}" stroke="#1a1d2e" stroke-width="2"/>
-      ${endLabel(last.value, fmtUsd(last.value, true), C_VALUE)}
-      ${endLabel(last.invested, fmtUsd(last.invested, true), C_CONTEXT)}
+      <circle cx="${x(s.length-1)}" cy="${y(last.value)}" r="4" fill="${C_VALUE}" stroke="#1a1d2e" stroke-width="2"/>`;
+    // direct end-labels — only when the two endpoints separate enough to read
+    const sep = Math.abs(y(last.value) - y(last.invested)) >= 14;
+    const endLabel = (v, txt) => sep
+      ? `<text x="${x(s.length-1) + 8}" y="${y(v) + 3}" font-size="11" fill="#e2e8f0">${txt}</text>` : '';
+    endLabels = endLabel(last.value, fmtUsd(last.value, true)) + endLabel(last.invested, fmtUsd(last.invested, true));
+  }
+  // hypothetical lines: dashed (shape distinguishes them from the actual, not
+  // just hue), each with an end dot at its last in-domain point
+  const scenSvg = scenView.map(v => {
+    const p = v.pts.map((pt, k) => (k ? 'L' : 'M') + x(idx[pt.date]).toFixed(1) + ' ' + y(pt.value).toFixed(1)).join(' ');
+    const lp = v.pts[v.pts.length - 1];
+    return `<path d="${p}" fill="none" stroke="${v.color}" stroke-width="2" stroke-dasharray="5 3" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(idx[lp.date])}" cy="${y(lp.value)}" r="4" fill="${v.color}" stroke="#1a1d2e" stroke-width="2"/>`;
+  }).join('');
+
+  const legend = [
+    ...(hasActual ? [
+      `<span><span class="key" style="background:${C_VALUE}"></span>Portfolio value</span>`,
+      `<span><span class="key" style="background:${C_CONTEXT}"></span>Net invested</span>`] : []),
+    ...scenView.map(v => `<span><span class="key" style="background:repeating-linear-gradient(90deg,${v.color} 0 5px,transparent 5px 8px)"></span>${esc(v.name)}</span>`),
+  ].join('');
+
+  // per-scenario summary: end value, own P&L, and — when the cashflows match
+  // the actual portfolio's (substitute/benchmark) — the P&L delta vs actual
+  // (P&L, not end value: sale proceeds differ between the two, and the
+  // invested line already nets them out on both sides)
+  const summary = scenView.map(v => {
+    const lp = v.series[v.series.length - 1];
+    const pnl = lp.value - lp.invested;
+    const vsActual = (v.comparable && last) ? ` · vs actual P&amp;L ${fmtSigned(pnl - (last.value - last.invested))}` : '';
+    return `<div class="muted-note"><span class="key" style="background:${v.color};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:6px"></span>${esc(v.name)}: ${fmtUsd(lp.value, true)} (P&amp;L ${fmtSigned(pnl)}${vsActual})</div>`;
+  }).join('');
+
+  card.insertAdjacentHTML('beforeend', `
+    <div class="chart-legend">${legend}</div>
+    <svg width="${W}" height="${H}" role="img" aria-label="Portfolio value vs net invested over time, with what-if scenario overlays">
+      ${grid}${xlabels}
+      ${actualSvg}
+      ${scenSvg}
+      ${endLabels}
       <line id="pnl-crosshair" y1="${M.top}" y2="${M.top + ph}" stroke="#3d4166" stroke-width="1" visibility="hidden"/>
       <rect x="${M.left}" y="${M.top}" width="${pw}" height="${ph}" fill="transparent" id="pnl-hover"/>
     </svg>
-    <div class="chart-tooltip" id="pnl-tt"></div>` + note);
+    <div class="chart-tooltip" id="pnl-tt"></div>` + summary + note);
 
+  const scenMaps = scenView.map(v => {
+    const m = {};
+    v.pts.forEach(p => { m[p.date] = p.value; });
+    return m;
+  });
+  const ttKey = c => `<span class="key" style="background:${c};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>`;
   const svgEl = card.querySelector('svg');
   const hover = document.getElementById('pnl-hover');
   const cross = document.getElementById('pnl-crosshair');
@@ -747,15 +990,23 @@ function renderValueChart() {
   hover.addEventListener('pointermove', ev => {
     const rect = svgEl.getBoundingClientRect();
     const px = ev.clientX - rect.left;
-    const i = Math.max(0, Math.min(s.length - 1, Math.round((px - M.left) / pw * (s.length - 1))));
-    const d = s[i];
+    const i = Math.max(0, Math.min(base.length - 1, Math.round((px - M.left) / pw * (base.length - 1))));
+    const d = base[i];
     cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
     cross.setAttribute('visibility', 'visible');
-    const pnl = d.value - d.invested;
-    tt.innerHTML = `<div class="tt-date">${esc(d.date)}</div>
-      <div class="tt-row"><span class="tt-label"><span class="key" style="background:${C_VALUE};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>Value</span><span class="tt-val">${fmtUsd(d.value)}</span></div>
-      <div class="tt-row"><span class="tt-label"><span class="key" style="background:${C_CONTEXT};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>Invested</span><span class="tt-val">${fmtUsd(d.invested)}</span></div>
-      <div class="tt-row"><span class="tt-label">P&amp;L</span><span class="tt-val ${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(pnl >= 0 ? '+' : '') + fmtUsd(pnl)}</span></div>`;
+    let rows = '';
+    if (hasActual) {
+      const a = s[i];
+      const pnl = a.value - a.invested;
+      rows += `<div class="tt-row"><span class="tt-label">${ttKey(C_VALUE)}Value</span><span class="tt-val">${fmtUsd(a.value)}</span></div>
+        <div class="tt-row"><span class="tt-label">${ttKey(C_CONTEXT)}Invested</span><span class="tt-val">${fmtUsd(a.invested)}</span></div>
+        <div class="tt-row"><span class="tt-label">P&amp;L</span><span class="tt-val ${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(pnl >= 0 ? '+' : '') + fmtUsd(pnl)}</span></div>`;
+    }
+    scenView.forEach((v, k) => {
+      const val = scenMaps[k][d.date];
+      if (val != null) rows += `<div class="tt-row"><span class="tt-label">${ttKey(v.color)}${esc(v.name)}</span><span class="tt-val">${fmtUsd(val)}</span></div>`;
+    });
+    tt.innerHTML = `<div class="tt-date">${esc(d.date)}</div>` + rows;
     tt.style.display = 'block';
     const cardRect = card.getBoundingClientRect();
     const ttx = Math.min(ev.clientX - cardRect.left + 14, card.clientWidth - tt.offsetWidth - 8);
@@ -766,7 +1017,8 @@ function renderValueChart() {
     cross.setAttribute('visibility', 'hidden'); tt.style.display = 'none';
   });
 
-  // KPI tiles from the latest point
+  // KPI tiles from the latest actual point
+  if (!hasActual) return;
   const pnl = last.value - last.invested;
   const pct = last.invested ? pnl / last.invested * 100 : null;
   document.getElementById('kpi-value').textContent = fmtUsd(last.value);
@@ -1053,13 +1305,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
-                pnl_series: dict, pnl_drivers: list) -> str:
+                pnl_series: dict, pnl_drivers: list, whatif: list) -> str:
     data_json = json.dumps({
         "timeline": timeline,
         "alignment_rows": alignment_rows,
         "per_ticker": per_ticker,
         "pnl_series": pnl_series,
         "pnl_drivers": pnl_drivers,
+        "whatif": whatif,
     }, default=str)
 
     total = len(alignment_rows)
@@ -1152,8 +1405,39 @@ def render_html(timeline: list, alignment_rows: list, per_ticker: dict,
 # Main
 # ---------------------------------------------------------------------------
 
+def print_whatif_preview(whatif: list, pnl_series: dict) -> None:
+    actual_last = pnl_series["series"][-1] if pnl_series["series"] else None
+    for w in whatif:
+        print(f"\n{w['name']} ({w['id']})")
+        for warn in w["warnings"]:
+            print(f"  ! {warn}")
+        if not w["series"]:
+            print("  no computable value series")
+            continue
+        last = w["series"][-1]
+        pnl = last["value"] - last["invested"]
+        print(f"  {w['series'][0]['date']} → {last['date']}: "
+              f"value ${last['value']:,.0f} | invested ${last['invested']:,.0f} | "
+              f"P&L {'+' if pnl >= 0 else '-'}${abs(pnl):,.0f}")
+        if actual_last and w["comparable"]:
+            # compare P&L, not end value — after a sell the proceeds sit in
+            # cash, and the invested line already nets them out on both sides
+            actual_pnl = actual_last["value"] - actual_last["invested"]
+            d = pnl - actual_pnl
+            print(f"  vs actual P&L ({'+' if actual_pnl >= 0 else '-'}${abs(actual_pnl):,.0f}): "
+                  f"{'+' if d >= 0 else '-'}${abs(d):,.0f}")
+    print()
+
+
 def main():
     open_browser = "--open" in sys.argv
+    preview = None
+    if "--whatif-preview" in sys.argv:
+        i = sys.argv.index("--whatif-preview")
+        if i + 1 >= len(sys.argv):
+            print("usage: generate_dashboard.py --whatif-preview <scenario id or name>")
+            sys.exit(2)
+        preview = sys.argv[i + 1]
 
     print("Loading data…")
     trades = load_trades()
@@ -1161,6 +1445,37 @@ def main():
     candidates = load_candidates()
     runs = load_research_runs()
     journal = load_journal()
+    hypotheticals = load_hypotheticals()
+
+    if preview:
+        # preview targets one scenario, active or not — no HTML is written
+        scenarios = [s for s in hypotheticals
+                     if s.get("id") == preview
+                     or preview.lower() in (s.get("name") or "").lower()]
+        if not scenarios:
+            print(f"No scenario matching {preview!r} in tracking/hypotheticals.json")
+            sys.exit(1)
+    else:
+        scenarios = [s for s in hypotheticals if s.get("status", "active") == "active"]
+
+    # Daily price history for the P&L value chart (only fully-priced tickers),
+    # plus whatever the active scenarios need on top of the actual set
+    first_trade_date = min((t["date"] for t in trades if t.get("date")), default=None)
+    history_tickers = {t["ticker"] for t in trades if t.get("shares") and t.get("price_per_share")}
+    scen_starts = [t["date"] for sc in scenarios if sc.get("type") == "standalone"
+                   for t in sc.get("trades", []) if t.get("date")]
+    hist_start = min([d for d in [first_trade_date] + scen_starts if d], default=None)
+    hist_tickers = history_tickers | scenario_needed_tickers(scenarios)
+    if hist_tickers and hist_start:
+        print(f"Fetching price history since {hist_start} for: {', '.join(sorted(hist_tickers))}")
+    history = fetch_price_history(hist_tickers, hist_start) if hist_start else {}
+
+    pnl_series = build_value_series(trades, history)
+    whatif = build_whatif_series(scenarios, trades, history)
+
+    if preview:
+        print_whatif_preview(whatif, pnl_series)
+        return
 
     # Fetch current prices for tickers with entry price data (enables P&L)
     priced_tickers = {t["ticker"] for t in trades if t.get("price_per_share")}
@@ -1168,26 +1483,19 @@ def main():
         print(f"Fetching current prices for: {', '.join(sorted(priced_tickers))}")
     prices = fetch_current_prices(priced_tickers)
 
-    # Daily price history for the P&L value chart (only fully-priced tickers)
-    first_trade_date = min((t["date"] for t in trades if t.get("date")), default=None)
-    history_tickers = {t["ticker"] for t in trades if t.get("shares") and t.get("price_per_share")}
-    if history_tickers and first_trade_date:
-        print(f"Fetching price history since {first_trade_date} for: {', '.join(sorted(history_tickers))}")
-    history = fetch_price_history(history_tickers, first_trade_date) if first_trade_date else {}
-
     verdict_lookup = build_verdict_lookup(portfolio, candidates)
     timeline = build_timeline(runs, trades, journal, verdict_lookup)
     alignment = build_alignment(trades, verdict_lookup, prices)
     per_ticker = build_per_ticker(portfolio, candidates, trades, prices)
-    pnl_series = build_value_series(trades, history)
     pnl_drivers = build_pnl_drivers(trades, prices, alignment)
 
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     out = DASHBOARD_DIR / "index.html"
-    out.write_text(render_html(timeline, alignment, per_ticker, pnl_series, pnl_drivers))
+    out.write_text(render_html(timeline, alignment, per_ticker, pnl_series, pnl_drivers, whatif))
 
     print(f"Dashboard written to {out}")
-    print(f"  {len(runs)} research runs  |  {len(trades)} trades  |  {len(journal)} journal entries  |  {len(per_ticker)} tickers")
+    print(f"  {len(runs)} research runs  |  {len(trades)} trades  |  {len(journal)} journal entries  |  "
+          f"{len(per_ticker)} tickers  |  {len(whatif)} active what-if scenarios")
 
     if open_browser:
         webbrowser.open(out.as_uri())

@@ -6,7 +6,7 @@ This is for the user's own thinking. Not advice for anyone else. Skip disclaimer
 
 ## Architecture
 
-Four agents, three entry points. Plus two utility commands with no agent — `/log-trade` hits Notion directly, `/journal` writes only local tracking. The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
+Four agents, three entry points. Plus three utility commands with no agent — `/log-trade` hits Notion directly, `/journal` and `/what-if` write only local tracking. The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
 
 | Command | Agent(s) | Prompt file(s) |
 |---|---|---|
@@ -15,6 +15,7 @@ Four agents, three entry points. Plus two utility commands with no agent — `/l
 | `/podcast <run-dir>` | podcast-producer | `.claude/agents/podcast-producer.md` |
 | `/log-trade <description>` | — (Notion MCP direct) | `.claude/commands/log-trade.md` |
 | `/journal <reflection>` | — (local tracking direct) | `.claude/commands/journal.md` |
+| `/what-if <scenario>` | — (local tracking direct) | `.claude/commands/what-if.md` |
 
 The agents' prompts are the rubrics; if output quality drifts, tighten the relevant prompt rather than adding scaffolding.
 
@@ -51,11 +52,20 @@ A lightweight capture command for the user's own thinking — reflections, hesit
 3. **Persist** — appends an entry (`journal-<YYYYMMDD>-<seq>`) to `tracking/journal.json` and, if the user opts in at commit time, regenerates the dashboard (the entry renders as a violet node in the Timeline view).
 4. **Commit** — `/journal` commits on its own `journal/<YYYY-MM-DD>-<NNN>` branch and opens a PR (same git flow as `/scout`).
 
+## What-if flow
+
+Counterfactual comparison of concrete trade histories — **not** strategy backtesting (no rebalancing rules, dividends, or intraday fills; daily closes only). Scenarios live in `tracking/hypotheticals.json` (schema in `tracking/README.md`) and render as dashed overlay lines on the dashboard's P&L value chart.
+
+1. **Classify** — `/what-if` takes everything after it as either a new scenario (default) or a management request (archive / reactivate / rename), detected by intent. Scenarios are matched by name substring first, then `id`.
+2. **Parse** — a new scenario becomes one of three types: `substitute` (clone the actual trade log with ticker swaps — same dollars into the swapped ticker at its close; swapped sells sell the same fraction of the hypothetical position), `benchmark` (every actual trade re-executed into one ticker, e.g. SPY), or `standalone` (explicit hypothetical trade list; DCA phrasings expanded to dated trades). Shares/prices are never stored for derived trades — `scripts/generate_dashboard.py` derives them from daily closes.
+3. **Preview** — `python3 scripts/generate_dashboard.py --whatif-preview <id>` prints the scenario's value / invested / P&L (and, for substitute/benchmark, the P&L delta vs actual) without writing HTML. Price history is cached per day in the gitignored `tracking/price-cache.json`, so iterating is cheap.
+4. **Commit** — `/what-if` commits on its own `whatif/<YYYY-MM-DD>-<NNN>` branch and opens a PR (same git flow as `/journal`). IDs are `whatif-<YYYYMMDD>-<NNN>`, immutable; `status` flips between `active`/`archived` instead of deleting; each scenario keeps a fixed `color_index` so chart colors never reshuffle.
+
 ## Git convention
 
 Every run lands as its **own branch + Pull Request** — never a direct commit to `main`. The **agents never touch git** — the commands own it. Remote is named `origin`; base branch is `main`.
 
-**Branch-first, uniform across all five.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
+**Branch-first, uniform across all six.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
 
 Standardized branch names — `<type>/<identifier>`, all date-prefixed, all computable before the work:
 
@@ -66,10 +76,11 @@ Standardized branch names — `<type>/<identifier>`, all date-prefixed, all comp
 | `/podcast` | `podcast/<YYYY-MM-DD>-<slug>` | basename of the target report dir (already `YYYY-MM-DD-<slug>`) | writes into `reports/<id>/podcast/` |
 | `/log-trade` | `log-trade/<YYYY-MM-DD>-<ticker-slug>` | today + parsed ticker(s) (hyphen-joined if several) | — (tracking files) |
 | `/journal` | `journal/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `journal.json` | — (tracking file) |
+| `/what-if` | `whatif/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `hypotheticals.json` (bumped past existing branches for management runs) | — (tracking file) |
 
 **Prompt-first for anything remote.** Local branch creation is cheap and unprompted; the run does its work on the branch, then the command shows the files and uses `AskUserQuestion` to gate the externally-visible steps: *commit & push?* / *open PR?*, then (after the PR is open) *merge?* — nothing is pushed or merged without the user's yes.
 
-**The dashboard is committed, regeneration is opt-in.** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade` and `/journal` (tracking files) and `/research` (tracking + a new `final-report.md`) — *can* regenerate it (`python3 scripts/generate_dashboard.py`), but regeneration is **not automatic**: the script fetches live prices via yfinance (slow / network-heavy), so each of those commands **asks the user** (a third question folded into the same commit-permission `AskUserQuestion`) whether to regenerate. Only when the user says yes does the command run the script and stage `dashboard/index.html` **with the run**; otherwise the committed dashboard is left as-is and may lag the data until the next opt-in regen. `/scout` and `/podcast` touch no dashboard input, so they neither regenerate nor stage it.
+**The dashboard is committed, regeneration is opt-in.** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files) and `/research` (tracking + a new `final-report.md`) — *can* regenerate it (`python3 scripts/generate_dashboard.py`), but regeneration is **not automatic**: the script fetches live prices via yfinance (slow / network-heavy), so each of those commands **asks the user** (a third question folded into the same commit-permission `AskUserQuestion`) whether to regenerate. Only when the user says yes does the command run the script and stage `dashboard/index.html` **with the run**; otherwise the committed dashboard is left as-is and may lag the data until the next opt-in regen. `/scout` and `/podcast` touch no dashboard input, so they neither regenerate nor stage it.
 
 Canonical procedure (each command substitutes branch / paths / title):
 
@@ -140,6 +151,7 @@ tracking/
   catalysts.json               # macro/multi-ticker events
   trades.json                  # individual trade log written by /log-trade
   journal.json                 # free-form reflections written by /journal
+  hypotheticals.json           # what-if scenarios written by /what-if
 dashboard/
   index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / research) only when the user opts in at commit time (regen is slow — fetches live prices)
 ```
@@ -148,7 +160,7 @@ Cast voices live in `.claude/podcast-cast.json` (created on first `/podcast` run
 
 ## Tracking
 
-Five persistent JSON files accumulate across all research runs. They live in `tracking/` and are committed alongside each research/trade/journal PR (via `git add tracking/`).
+Six persistent JSON files accumulate across all research runs. They live in `tracking/` and are committed alongside each research/trade/journal/what-if PR (via `git add tracking/`).
 
 ```
 tracking/
@@ -157,11 +169,14 @@ tracking/
   catalysts.json     # macro/multi-ticker: regulatory events, IPOs, policy decisions
   trades.json        # individual trade log: every /log-trade execution with linked research
   journal.json       # free-form reflections: every /journal entry with linked runs/tickers
+  hypotheticals.json # what-if scenarios: substitutions / standalone portfolios / benchmarks
 ```
 
-**What feeds in**: research-director (Phase 8) appends `reports` and `events` entries to `portfolio.json` (for held tickers) and `candidates.json` (for candidates) after each run. New tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`. `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Amount is always positive; `Action` carries buy/sell direction). `trades.json` mirrors the Notion log 1:1. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) and may add a `[NEW]` linked ticker to `candidates.json` on request — it does not touch Notion. Podcast and scout do not write to any tracking files.
+(`tracking/price-cache.json` may also exist — a gitignored daily-close cache written by `scripts/generate_dashboard.py`, refetched whole per ticker per day. Never committed.)
 
-**What consumes them**: scout (Phase 3) reads `portfolio.json`, `candidates.json`, and `catalysts.json` to tag signals as `[PORTFOLIO]`, `[CANDIDATE]`, or `[NEW]` and to surface watchlist alerts when signals match active event entries. `scripts/generate_dashboard.py` reads `portfolio.json`, `candidates.json`, `trades.json`, and `journal.json` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L).
+**What feeds in**: research-director (Phase 8) appends `reports` and `events` entries to `portfolio.json` (for held tickers) and `candidates.json` (for candidates) after each run. New tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`. `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Amount is always positive; `Action` carries buy/sell direction). `trades.json` mirrors the Notion log 1:1. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) and may add a `[NEW]` linked ticker to `candidates.json` on request — it does not touch Notion. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. Podcast and scout do not write to any tracking files.
+
+**What consumes them**: scout (Phase 3) reads `portfolio.json`, `candidates.json`, and `catalysts.json` to tag signals as `[PORTFOLIO]`, `[CANDIDATE]`, or `[NEW]` and to surface watchlist alerts when signals match active event entries. `scripts/generate_dashboard.py` reads `portfolio.json`, `candidates.json`, `trades.json`, `journal.json`, and `hypotheticals.json` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L, and what-if scenario overlays on the P&L value chart).
 
 **journal.json structure**: `{ last_updated, entries: [{ id, date, text, linked_research: [{ run, date, report_path, linked_at }], linked_tickers: [<symbol>] }] }`. Append-only log — entries are not snapshots and are never auto-pruned. Entry `id` is `journal-<YYYYMMDD>-<seq>` (per-day sequence, mirrors the `trades.json` id scheme).
 

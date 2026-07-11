@@ -8,3 +8,7 @@ reports/**/podcast/segments/
 # Python bytecode cache from scripts/.
 __pycache__/
 
+# Daily-close price cache written by scripts/generate_dashboard.py — pure
+# regenerable optimization, refetched whole per ticker per day.
+tracking/price-cache.json
+
