@@ -31,6 +31,7 @@ Prism runs inside Claude Code. One-time setup:
 | `NOTION_INVESTMENT_LOG_DATABASE_ID` | `/scout`, `/log-trade` | Optional — same name fallback |
 | `EDGAR_CONTACT_EMAIL` | `/scout`, `/research` (SEC EDGAR requires a contact email in the request header) | Recommended — falls back to a generic placeholder |
 | `X_BEARER_TOKEN` | `/scout` (X signal source) | Optional — without it, scout runs on GDELT / HN / EDGAR |
+| `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` | `/sync-portfolio` (brokerage read via SnapTrade Personal API key) | Optional — without them, `/sync-portfolio` runs review-only off the last committed snapshot |
 
 **Settings files:**
 
@@ -235,13 +236,42 @@ Tracks hypothetical portfolios next to your real one on the dashboard's P&L char
 
 ---
 
-The six commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted before anything is committed, pushed, or merged.
+## Sync-portfolio
+
+```
+/sync-portfolio [focus]
+```
+
+Pulls your **real brokerage state** — accounts, balances, positions, recent activity — via [SnapTrade](https://snaptrade.com) (Personal API key, read-only for Fidelity), reconciles it against Prism's tracking, and reviews the portfolio. The brokerage is the source of truth; Prism's `portfolio.json` / `trades.json` are what it believes — this command closes the gap.
+
+**How it works:**
+
+1. **Capability check** — if `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are set (env or `.env`), it fetches live via `scripts/fetch_snaptrade.py` into `tracking/brokerage-snapshot.json`. If not (say, a cloud sandbox without the keys), it degrades to a **review-only** pass over the last committed snapshot, led by a staleness warning — no writes, no git.
+2. **Reconcile** — positions held but untracked (offer to add to `portfolio.json`), held names still filed as candidates (offer the move), tracked positions no longer held (offer removal), and brokerage trades missing from `trades.json` (suggested as `/log-trade` backfills — never auto-written, since `trades.json` mirrors Notion 1:1). Every fix is user-approved before any write.
+3. **Review** — concentration, cash, per-position P&L, names held without a research thesis on file (listed as ready-to-run `/research` questions), active buy-triggers/falsifiers on held names, and stale theses. An optional focus hint (`/sync-portfolio concentration`) weights the review.
+4. Lands on its own branch + Pull Request, same flow as every other command.
+
+**Output** → `tracking/brokerage-snapshot.json` (+ approved fixes to `portfolio.json` / `candidates.json`)
+
+**Requirements:** a free SnapTrade account with a **Personal API key** and your brokerage connected once via their Connection Portal (browser, one-time), then `SNAPTRADE_CLIENT_ID` / `SNAPTRADE_CONSUMER_KEY` in `.env`. Setup steps in `.env.example`. The consumerKey has full read access to your connected brokerage — treat it like a password.
+
+**Examples:**
+
+```
+/sync-portfolio
+/sync-portfolio concentration
+/sync-portfolio just the reconciliation
+```
+
+---
+
+The seven commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted before anything is committed, pushed, or merged.
 
 ---
 
 ## Tracking
 
-Research runs accumulate a persistent tracking layer across six JSON files in `tracking/`:
+Research runs accumulate a persistent tracking layer across seven JSON files in `tracking/`:
 
 - **`portfolio.json`** — tickers you hold: each position carries a `reports[]` array (how the thesis evolved across runs) and an `events[]` array (buy triggers, falsifiers, event monitors to watch)
 - **`candidates.json`** — tickers under consideration: user-curated, same schema. You add tickers manually; research runs populate their `reports[]` and `events[]` for active entries.
@@ -249,6 +279,7 @@ Research runs accumulate a persistent tracking layer across six JSON files in `t
 - **`trades.json`** — log of every individual trade execution: date, ticker, action, amount, shares, price per share, and a `linked_research[]` array pointing to the specific research runs that motivated the trade. Written by `/log-trade`; read by the dashboard for alignment analysis and P&L.
 - **`journal.json`** — free-form reflections from `/journal`: text plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your thinking — hesitations, imagined scenarios, roads not taken — read by the dashboard for the timeline.
 - **`hypotheticals.json`** — what-if scenarios from `/what-if`: trade substitutions, standalone hypothetical portfolios, and benchmarks, read by the dashboard for the P&L chart overlays.
+- **`brokerage-snapshot.json`** — the real brokerage state (accounts, balances, positions, recent activity) fetched from SnapTrade by `/sync-portfolio`; the ground truth the other tracking files are reconciled against.
 
 **How it feeds:**
 

@@ -6,7 +6,7 @@ This is for the user's own thinking. Not advice for anyone else. Skip disclaimer
 
 ## Architecture
 
-Four agents, three entry points. Plus three utility commands with no agent — `/log-trade` hits Notion directly, `/journal` and `/what-if` write only local tracking. The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
+Four agents, three entry points. Plus four utility commands with no agent — `/log-trade` hits Notion directly, `/journal` and `/what-if` write only local tracking, `/sync-portfolio` hits SnapTrade directly. The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
 
 | Command | Agent(s) | Prompt file(s) |
 |---|---|---|
@@ -16,6 +16,7 @@ Four agents, three entry points. Plus three utility commands with no agent — `
 | `/log-trade <description>` | — (Notion MCP direct) | `.claude/commands/log-trade.md` |
 | `/journal <reflection>` | — (local tracking direct) | `.claude/commands/journal.md` |
 | `/what-if <scenario>` | — (local tracking direct) | `.claude/commands/what-if.md` |
+| `/sync-portfolio [focus]` | — (SnapTrade direct) | `.claude/commands/sync-portfolio.md` |
 
 The agents' prompts are the rubrics; if output quality drifts, tighten the relevant prompt rather than adding scaffolding.
 
@@ -61,11 +62,21 @@ Counterfactual comparison of concrete trade histories — **not** strategy backt
 3. **Preview** — `python3 scripts/generate_dashboard.py --whatif-preview <id>` prints the scenario's value / invested / P&L (and, for substitute/benchmark, the P&L delta vs actual) without writing HTML. Price history is cached per day in the gitignored `tracking/price-cache.json`, so iterating is cheap.
 4. **Commit** — `/what-if` commits on its own `whatif/<YYYY-MM-DD>-<NNN>` branch and opens a PR (same git flow as `/journal`). IDs are `whatif-<YYYYMMDD>-<NNN>`, immutable; `status` flips between `active`/`archived` instead of deleting; each scenario keeps a fixed `color_index` so chart colors never reshuffle.
 
+## Sync-portfolio flow
+
+Pulls the **real brokerage state** via SnapTrade (Personal API key — HMAC-signed requests, read-only for Fidelity, no userId/userSecret; the key resolves the user) and reviews it. Two modes, chosen automatically by capability:
+
+1. **Detect** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` present (env or `.env`) → sync mode; absent (e.g. a cloud sandbox without the keys) → **review-only mode**: no fetch, no writes, no git — the same review runs against the committed `tracking/brokerage-snapshot.json`, led by a staleness warning from its `fetched_at`.
+2. **Fetch** (sync mode) — `scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json` writes accounts, balances, positions, and lookback-window activities (stdlib-only; account numbers masked to last 4; exit 2 = creds missing → fall back to review-only).
+3. **Reconcile** — snapshot vs tracking: held-but-untracked → propose adding to `portfolio.json`; held-but-candidate → propose the move; tracked-but-not-held → propose removal; unlogged trades → **suggest `/log-trade`, never write `trades.json`** (it mirrors Notion 1:1). Fixes are user-approved before any write.
+4. **Review** — terse, investor-stance read of the snapshot: concentration, cash, per-position P&L, held-without-thesis (→ ready-to-run `/research` questions), active `events[]` on held names, thesis staleness.
+5. **Commit** — `/sync-portfolio` commits the snapshot + approved fixes on its own `sync-portfolio/<timestamp>` branch and opens a PR. Dashboard regen offered only if `portfolio.json`/`candidates.json` changed.
+
 ## Git convention
 
 Every run lands as its **own branch + Pull Request** — never a direct commit to `main`. The **agents never touch git** — the commands own it. Remote is named `origin`; base branch is `main`.
 
-**Branch-first, uniform across all six.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
+**Branch-first, uniform across all seven.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
 
 Standardized branch names — `<type>/<identifier>`, all date-prefixed, all computable before the work:
 
@@ -77,10 +88,11 @@ Standardized branch names — `<type>/<identifier>`, all date-prefixed, all comp
 | `/log-trade` | `log-trade/<YYYY-MM-DD>-<ticker-slug>` | today + parsed ticker(s) (hyphen-joined if several) | — (tracking files) |
 | `/journal` | `journal/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `journal.json` | — (tracking file) |
 | `/what-if` | `whatif/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `hypotheticals.json` (bumped past existing branches for management runs) | — (tracking file) |
+| `/sync-portfolio` | `sync-portfolio/<YYYY-MM-DD-HHMMSS>` | `date +%Y-%m-%d-%H%M%S` (per-second, like `/scout`) | — (tracking files) |
 
 **Prompt-first for anything remote.** Local branch creation is cheap and unprompted; the run does its work on the branch, then the command shows the files and uses `AskUserQuestion` to gate the externally-visible steps: *commit & push?* / *open PR?*, then (after the PR is open) *merge?* — nothing is pushed or merged without the user's yes.
 
-**The dashboard is committed, regeneration is opt-in.** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files) and `/research` (tracking + a new `final-report.md`) — *can* regenerate it (`python3 scripts/generate_dashboard.py`), but regeneration is **not automatic**: the script fetches live prices via yfinance (slow / network-heavy), so each of those commands **asks the user** (a third question folded into the same commit-permission `AskUserQuestion`) whether to regenerate. Only when the user says yes does the command run the script and stage `dashboard/index.html` **with the run**; otherwise the committed dashboard is left as-is and may lag the data until the next opt-in regen. `/scout` and `/podcast` touch no dashboard input, so they neither regenerate nor stage it.
+**The dashboard is committed, regeneration is opt-in.** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files), `/research` (tracking + a new `final-report.md`), and `/sync-portfolio` (only when a reconciliation fix touches `portfolio.json`/`candidates.json`; the snapshot itself is not a dashboard input) — *can* regenerate it (`python3 scripts/generate_dashboard.py`), but regeneration is **not automatic**: the script fetches live prices via yfinance (slow / network-heavy), so each of those commands **asks the user** (a third question folded into the same commit-permission `AskUserQuestion`) whether to regenerate. Only when the user says yes does the command run the script and stage `dashboard/index.html` **with the run**; otherwise the committed dashboard is left as-is and may lag the data until the next opt-in regen. `/scout` and `/podcast` touch no dashboard input, so they neither regenerate nor stage it.
 
 Canonical procedure (each command substitutes branch / paths / title):
 
@@ -152,6 +164,7 @@ tracking/
   trades.json                  # individual trade log written by /log-trade
   journal.json                 # free-form reflections written by /journal
   hypotheticals.json           # what-if scenarios written by /what-if
+  brokerage-snapshot.json      # real brokerage state fetched from SnapTrade by /sync-portfolio
 dashboard/
   index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / research) only when the user opts in at commit time (regen is slow — fetches live prices)
 ```
@@ -160,7 +173,7 @@ Cast voices live in `.claude/podcast-cast.json` (created on first `/podcast` run
 
 ## Tracking
 
-Six persistent JSON files accumulate across all research runs. They live in `tracking/` and are committed alongside each research/trade/journal/what-if PR (via `git add tracking/`).
+Seven persistent JSON files accumulate across all research runs. They live in `tracking/` and are committed alongside each research/trade/journal/what-if/sync-portfolio PR (via `git add tracking/`).
 
 ```
 tracking/
@@ -170,13 +183,14 @@ tracking/
   trades.json        # individual trade log: every /log-trade execution with linked research
   journal.json       # free-form reflections: every /journal entry with linked runs/tickers
   hypotheticals.json # what-if scenarios: substitutions / standalone portfolios / benchmarks
+  brokerage-snapshot.json # real brokerage state (accounts/positions/activity) from SnapTrade via /sync-portfolio
 ```
 
 (`tracking/price-cache.json` may also exist — a gitignored daily-close cache written by `scripts/generate_dashboard.py`, refetched whole per ticker per day. Never committed.)
 
-**What feeds in**: research-director (Phase 8) appends `reports` and `events` entries to `portfolio.json` (for held tickers) and `candidates.json` (for candidates) after each run. New tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`. `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Amount is always positive; `Action` carries buy/sell direction). `trades.json` mirrors the Notion log 1:1. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) and may add a `[NEW]` linked ticker to `candidates.json` on request — it does not touch Notion. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. Podcast and scout do not write to any tracking files.
+**What feeds in**: research-director (Phase 8) appends `reports` and `events` entries to `portfolio.json` (for held tickers) and `candidates.json` (for candidates) after each run. New tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`. `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Amount is always positive; `Action` carries buy/sell direction). `trades.json` mirrors the Notion log 1:1. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) and may add a `[NEW]` linked ticker to `candidates.json` on request — it does not touch Notion. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. `/sync-portfolio` overwrites `brokerage-snapshot.json` with the fetched brokerage state and, with per-fix user approval, applies reconciliation fixes to `portfolio.json`/`candidates.json` (add held-but-untracked, move candidate → portfolio, remove exited) — it never writes `trades.json` (owned by `/log-trade`, mirrors Notion 1:1). Podcast and scout do not write to any tracking files.
 
-**What consumes them**: scout (Phase 3) reads `portfolio.json`, `candidates.json`, and `catalysts.json` to tag signals as `[PORTFOLIO]`, `[CANDIDATE]`, or `[NEW]` and to surface watchlist alerts when signals match active event entries. `scripts/generate_dashboard.py` reads `portfolio.json`, `candidates.json`, `trades.json`, `journal.json`, and `hypotheticals.json` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L, and what-if scenario overlays on the P&L value chart).
+**What consumes them**: scout (Phase 3) reads `portfolio.json`, `candidates.json`, and `catalysts.json` to tag signals as `[PORTFOLIO]`, `[CANDIDATE]`, or `[NEW]` and to surface watchlist alerts when signals match active event entries. `scripts/generate_dashboard.py` reads `portfolio.json`, `candidates.json`, `trades.json`, `journal.json`, and `hypotheticals.json` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L, and what-if scenario overlays on the P&L value chart). `/sync-portfolio` reads `brokerage-snapshot.json` (its review-only fallback when SnapTrade credentials are absent) plus `portfolio.json`, `candidates.json`, and `trades.json` for reconciliation.
 
 **journal.json structure**: `{ last_updated, entries: [{ id, date, text, linked_research: [{ run, date, report_path, linked_at }], linked_tickers: [<symbol>] }] }`. Append-only log — entries are not snapshots and are never auto-pruned. Entry `id` is `journal-<YYYYMMDD>-<seq>` (per-day sequence, mirrors the `trades.json` id scheme).
 
@@ -238,7 +252,8 @@ The user is a long-term investor (multi-year holds), not a short-term arbitrageu
   - Company facts: `https://data.sec.gov/api/xbrl/companyfacts/CIK{10-digit-padded}.json`
   - **13F institutional breadth** — `scripts/fetch_13f_breadth.py <TICKER> <out.json>` pages full-text search over 13F-HR filings and writes per-quarter counts of distinct institutions holding the name (deduped by filer CIK) plus new/exited holders vs the prior quarter. 13F info tables key on CUSIP, not ticker — the script keeps a lazily-grown cache at `.claude/cusip-map.json`; for an uncached ticker the researcher looks the CUSIP up once and passes `--cusip`. A **confirmation lens** for ticker deep dives (researcher Step 3d): what matters is direction across 2–3+ consecutive quarters of holder count and new-position velocity — never a discovery signal (filings lag up to 45 days) and never a verdict driver on its own. **On by default only at effort=high** (it takes minutes per name); other efforts skip it unless the user explicitly asks for the 13F/institutional lens — the director passes `include_13f: yes/no` in each ticker dispatch.
 - **Yahoo Finance via yfinance** (`pip install yfinance`) — used by `scripts/fetch_ticker_stats.py` for per-ticker financial stats (price, PE ratios, margins, quarterly financials, price history) plus a `technicals` block: 50/200-day MAs, RSI(14), trailing returns, relative strength vs SPY (the free capital-flow proxy), and a volume trend — all computed in pandas (no ta-lib). Technicals are an **entry-timing lens** for the multi-year holder, never a buy/sell signal. Free, no auth. Researchers call this script at the start of Phase 3 in ticker sub-mode; do not call Yahoo Finance ad hoc when this script is available.
-- The research pipeline uses no paid data APIs (web search, WebFetch, EDGAR, yfinance are all free). If a free path doesn't exist for a question, say so in the report. The lone keyed source anywhere in Prism is scout's optional X feed (`X_BEARER_TOKEN`), which degrades to a warning when unset.
+- **SnapTrade** (`https://api.snaptrade.com/api/v1`, Personal API key — free tier) — used only by `scripts/fetch_snaptrade.py` for `/sync-portfolio`: accounts, balances, positions, recent activities from the user's connected brokerage (Fidelity — read-only, no trade placement). Auth is `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` in `.env`: every request carries `clientId` + `timestamp` query params and a `Signature` header (base64 HMAC-SHA256 of `{content, path, query}` signed with the consumerKey); no userId/userSecret — a Personal key resolves the user directly, and Register User is never called. The consumerKey has full read access to the connected brokerage: never print or commit it. Unset credentials degrade `/sync-portfolio` to review-only over the committed snapshot.
+- The research pipeline uses no paid data APIs (web search, WebFetch, EDGAR, yfinance are all free). If a free path doesn't exist for a question, say so in the report. The only keyed sources anywhere in Prism are scout's optional X feed (`X_BEARER_TOKEN`) and `/sync-portfolio`'s SnapTrade credentials — both degrade gracefully when unset.
 
 ## Dates
 
