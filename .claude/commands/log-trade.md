@@ -20,7 +20,7 @@ The Investment Log identifiers are read from the environment so the engine carri
   - `Ticker` — title (required)
   - `date` — date (default: today)
   - `Action` — select: `buy` / `add` / `trim` / `sell` (required)
-  - `Amount` — number in USD, **always positive** (required). Direction is carried by `Action`, not by the sign — never write a negative Amount.
+  - `Amount` — number in USD, **signed by direction** (required): **positive for `buy`/`add`** (cash out), **negative for `sell`/`trim`** (cash back). This log tracks net money invested, so cash-back actions are negative. The parsed `amount` (Step 2) is always the absolute value; the sign is applied only when writing this field — write `+amount` for buys/adds, `-amount` for sells/trims. `Shares` and `Price` stay positive regardless of direction.
   - `Shares` — number: share/unit count (coin quantity for crypto). Optional.
   - `Price` — number in USD: price per share / per coin. Optional.
   - `Comment` — rich text (optional)
@@ -96,7 +96,7 @@ The Investment Log identifiers are read from the environment so the engine carri
    ```
 
 5. **Insert the row to Notion** — **if Notion is unconfigured** (per *Database config* above), skip this entire step: set `notion_page_id` and `notion_url` to `null` and continue to Step 7. Otherwise create a page in the data source with these properties:
-   - `Ticker` (title), `date`, `Action` (select — the `action_type`), `Amount` (**always positive** — never sign it; `Action` carries direction), `Shares` (number, or omit if null), `Price` (number = `price_per_share`, or omit if null).
+   - `Ticker` (title), `date`, `Action` (select — the `action_type`), `Amount` (**signed**: `+amount` for `buy`/`add`, `-amount` for `sell`/`trim` — the log tracks net money invested, so cash-back actions are negative), `Shares` (number, or omit if null), `Price` (number = `price_per_share`, or omit if null).
 
    Build the `Comment` rich text from what is now known:
 
@@ -167,6 +167,8 @@ The Investment Log identifiers are read from the environment so the engine carri
    }
    ```
 
+   `amount_usd` is the **positive magnitude** (unsigned) regardless of `action` — direction lives in the `action` field, and `scripts/generate_dashboard.py` derives the sign from it. Only the Notion `Amount` (Step 5) is signed. Never write a negative `amount_usd`.
+
    Update `last_updated` to today. Write the file. Report: `"Logged to tracking/trades.json (ID: trade-AVGO-20260607-001)."`
 
 9. **Dashboard regeneration is optional** — regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy), so it is **not** run automatically. It is gated on the user's choice in Step 10 — don't run it here.
@@ -224,11 +226,11 @@ The Investment Log identifiers are read from the environment so the engine carri
 `/log-trade sold all VSAT $3200`
 → Parse: ticker=VSAT, action=sell, amount=3200
 → Research linking prompt shown (exits can also be linked)
-→ Notion row inserted with Action=sell, Amount=3200 (positive); VSAT deleted from portfolio.json; trades.json appended with amount_usd=3200
+→ Notion row inserted with Action=sell, Amount=-3200 (negative — cash back); VSAT deleted from portfolio.json; trades.json appended with amount_usd=3200 (unsigned magnitude)
 
 `/log-trade May 30 — trimmed CRM $500`
 → Parse: ticker=CRM, action=trim, amount=500, date=2026-05-30
-→ Research linking prompt shown; trim: no portfolio tracking change; Notion Action=trim, Amount=500 (positive)
+→ Research linking prompt shown; trim: no portfolio tracking change; Notion Action=trim, Amount=-500 (negative — partial cash back); trades.json amount_usd=500 (unsigned magnitude)
 
 `/log-trade bought AVGO at $385, $3850 total`
 → Parse: ticker=AVGO, action=buy, amount=3850, price_per_share=385, shares=10
