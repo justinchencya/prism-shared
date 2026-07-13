@@ -144,6 +144,13 @@ else
   echo "       optional. add to .env: X_BEARER_TOKEN=..."
 fi
 
+if [[ -n "${SNAPTRADE_CLIENT_ID:-}" && -n "${SNAPTRADE_CONSUMER_KEY:-}" ]]; then
+  ok "SNAPTRADE_CLIENT_ID + SNAPTRADE_CONSUMER_KEY set"
+else
+  info "SnapTrade credentials not set — /sync-portfolio runs review-only off the committed snapshot"
+  echo "       optional. add to .env: SNAPTRADE_CLIENT_ID=... and SNAPTRADE_CONSUMER_KEY=...   (see .env.example)"
+fi
+
 echo ""
 
 # --- Settings files --------------------------------------------------------
