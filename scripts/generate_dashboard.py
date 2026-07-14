@@ -32,8 +32,10 @@ def load_trades() -> list:
     return data.get("trades", [])
 
 
-def load_portfolio() -> dict:
-    data = load_json(TRACKING_DIR / "portfolio.json", {"positions": []})
+def load_theses() -> dict:
+    # positions-thesis.json is the thesis overlay (reports[]/events[] per name),
+    # not a holdings ledger — what's actually held lives in brokerage-snapshot.json.
+    data = load_json(TRACKING_DIR / "positions-thesis.json", {"positions": []})
     return {p["ticker"]: p for p in data.get("positions", [])}
 
 
@@ -91,10 +93,10 @@ def load_research_runs() -> list:
     return runs
 
 
-def build_verdict_lookup(portfolio: dict, candidates: dict) -> dict:
-    """Build {(ticker, run): verdict} from portfolio and candidates reports[]."""
+def build_verdict_lookup(theses: dict, candidates: dict) -> dict:
+    """Build {(ticker, run): verdict} from thesis and candidates reports[]."""
     lookup = {}
-    for ticker, entry in {**portfolio, **candidates}.items():
+    for ticker, entry in {**theses, **candidates}.items():
         for r in entry.get("reports", []):
             if r.get("run") and r.get("verdict"):
                 lookup[(ticker, r["run"])] = r["verdict"]
@@ -677,7 +679,7 @@ def build_pnl_drivers(trades: list, prices: dict, alignment_rows: list) -> list:
 
 
 def build_per_ticker(
-    portfolio: dict,
+    theses: dict,
     candidates: dict,
     trades: list,
     prices: dict,
@@ -686,7 +688,7 @@ def build_per_ticker(
     result = {}
     for ticker in sorted(tickers):
         ticker_trades = [t for t in trades if t["ticker"] == ticker]
-        holding = portfolio.get(ticker) or candidates.get(ticker) or {}
+        holding = theses.get(ticker) or candidates.get(ticker) or {}
         research_history = holding.get("reports", [])
         events = holding.get("events", [])[:3]
 
@@ -713,7 +715,7 @@ def build_per_ticker(
             "events": events,
             "current_price": current_price,
             "pnl_pct": pnl_pct,
-            "in_portfolio": ticker in portfolio,
+            "has_thesis": ticker in theses,
         }
     return result
 
@@ -1223,7 +1225,7 @@ function renderTicker(ticker) {
         <div class="panel-card" style="margin-bottom:12px">
           <h3>Position</h3>
           ${priceBlock}
-          <div style="margin-top:8px;color:#64748b;font-size:12px">${d.in_portfolio ? 'In portfolio' : 'Not currently held'}</div>
+          <div style="margin-top:8px;color:#64748b;font-size:12px">${d.has_thesis ? 'Thesis on file' : 'No active thesis'}</div>
         </div>
         <div class="panel-card">
           <h3>Trade History</h3>
@@ -1443,7 +1445,7 @@ def main():
 
     print("Loading data…")
     trades = load_trades()
-    portfolio = load_portfolio()
+    theses = load_theses()
     candidates = load_candidates()
     runs = load_research_runs()
     journal = load_journal()
@@ -1485,10 +1487,10 @@ def main():
         print(f"Fetching current prices for: {', '.join(sorted(priced_tickers))}")
     prices = fetch_current_prices(priced_tickers)
 
-    verdict_lookup = build_verdict_lookup(portfolio, candidates)
+    verdict_lookup = build_verdict_lookup(theses, candidates)
     timeline = build_timeline(runs, trades, journal, verdict_lookup)
     alignment = build_alignment(trades, verdict_lookup, prices)
-    per_ticker = build_per_ticker(portfolio, candidates, trades, prices)
+    per_ticker = build_per_ticker(theses, candidates, trades, prices)
     pnl_drivers = build_pnl_drivers(trades, prices, alignment)
 
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)

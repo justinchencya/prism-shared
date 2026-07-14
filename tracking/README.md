@@ -2,30 +2,30 @@
 
 Seven persistent JSON files that accumulate actionable follow-ups across all Prism research runs.
 
-- **portfolio.json** — tickers you hold: each position carries a `reports[]` array (thesis evolution across runs) and an `events[]` array (buy triggers, falsifiers, event monitors)
-- **candidates.json** — tickers you're watching: user-curated, same schema as portfolio positions. You add tickers manually; research runs populate their `reports[]` and `events[]`.
+- **positions-thesis.json** — the **thesis overlay** for names you hold: each entry carries a `reports[]` array (thesis evolution across runs) and an `events[]` array (buy triggers, falsifiers, event monitors). Records *why* a held name is held — not shares or cost (those live in `brokerage-snapshot.json`). Presence means a thesis is on file, not the definition of "held"; a held name may have no entry, and passive holdings never get one.
+- **candidates.json** — the same overlay for tickers you're *watching* but don't hold: user-curated, same schema. You add tickers manually; research runs populate their `reports[]` and `events[]`.
 - **catalysts.json** — macro/multi-ticker events: regulatory decisions, IPOs, policy changes
 - **trades.json** — log of every individual trade execution written by `/log-trade` (see schema below)
 - **journal.json** — free-form reflections written by `/journal`: each entry carries `text` plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your own thinking (hesitations, imagined scenarios, roads not taken), surfaced in the dashboard timeline.
 - **hypotheticals.json** — what-if scenarios written by `/what-if`: counterfactual trade substitutions, standalone hypothetical portfolios, and single-ticker benchmarks, overlaid on the dashboard P&L chart (see schema below)
-- **brokerage-snapshot.json** — the real brokerage state (accounts, balances, positions, recent activity) pulled from SnapTrade by `/sync-portfolio` via `scripts/fetch_snaptrade.py` (see schema below). The source of truth portfolio.json/trades.json are reconciled against; consumers judge staleness from `fetched_at`. Ships as an empty template in prism-shared — real data lives only in the private repo.
+- **brokerage-snapshot.json** — the real brokerage state (accounts, balances, positions, recent activity) pulled from SnapTrade by `/sync-portfolio` via `scripts/fetch_snaptrade.py` (see schema below). The **source of truth for holdings** that the thesis overlay (positions-thesis.json / candidates.json) is reconciled against; consumers judge staleness from `fetched_at`. Ships as an empty template in prism-shared — real data lives only in the private repo.
 
 (An eighth file, `price-cache.json`, may appear here — a gitignored daily-close cache written by `scripts/generate_dashboard.py`. Pure regenerable optimization, never committed.)
 
-Entries in portfolio.json / candidates.json / catalysts.json are created and updated automatically by the research-director (Phase 8) after each `/research` run — but only for tickers already in portfolio.json or candidates.json. New tickers surfaced in a run appear as `[NEW]` in the final report; you add them to candidates.json manually if you want to track them (or via `/journal` when you link a `[NEW]` ticker to a reflection).
+Entries in positions-thesis.json / candidates.json / catalysts.json are created and updated automatically by the research-director (Phase 8) after each `/research` run — but only for tickers that are held (per brokerage-snapshot.json; a run on a held name without a thesis creates its positions-thesis.json entry) or already in candidates.json. Other new tickers surfaced in a run appear as `[NEW]` in the final report; you add them to candidates.json manually if you want to track them (or via `/journal` when you link a `[NEW]` ticker to a reflection).
 
-Scout reads portfolio.json, candidates.json, and catalysts.json for context but never writes to them. trades.json, journal.json, and hypotheticals.json are read by the dashboard only. brokerage-snapshot.json is written and read only by `/sync-portfolio` (which may propose fixes to portfolio.json/candidates.json from it — trades.json is never written outside `/log-trade`).
+Scout and research-director derive "what's held" (`[PORTFOLIO]` tagging) from brokerage-snapshot.json, never from the thesis overlay; they read positions-thesis.json, candidates.json, and catalysts.json for thesis/event context but never write to them (research-director excepted — it writes the overlay in Phase 8). trades.json, journal.json, and hypotheticals.json are read by the dashboard only. brokerage-snapshot.json is written only by `/sync-portfolio` (which may propose thesis-overlay fixes to positions-thesis.json/candidates.json from it — trades.json is never written outside `/log-trade`).
 
 ---
 
 ## Unified ticker entry schema
 
-Both `portfolio.json` positions and `candidates.json` entries share the same structure:
+Both `positions-thesis.json` positions and `candidates.json` entries share the same structure:
 
 ```json
 {
   "ticker": "NVDA",
-  "added_date": "2026-06-06", // candidates.json only; omit in portfolio.json
+  "added_date": "2026-06-06", // candidates.json only; omit in positions-thesis.json
   "reports": [
     {
       "run": "2026-05-29-nvda-analysis",
@@ -64,7 +64,7 @@ Reports are appended in chronological order. Reading them in sequence shows how 
 
 ---
 
-## Schema: portfolio.json
+## Schema: positions-thesis.json
 
 ```json
 {
@@ -73,7 +73,7 @@ Reports are appended in chronological order. Reading them in sequence shows how 
 }
 ```
 
-Each position has `ticker`, `reports[]`, `events[]`. Snapshot — presence means currently held. To exit a position, delete the entry.
+Each position has `ticker`, `reports[]`, `events[]`. Thesis overlay — presence means a research thesis is on file for a held name, **not** the definition of "held" (that's `brokerage-snapshot.json`). No shares or cost are stored here. Prune an entry when you exit and no longer want to track the thesis.
 
 ---
 
@@ -86,7 +86,7 @@ Each position has `ticker`, `reports[]`, `events[]`. Snapshot — presence means
 }
 ```
 
-Each entry has `ticker`, `added_date`, `reports[]`, `events[]`. Snapshot — presence means actively watching. To stop watching, delete the entry. When you make a trade, delete the entry from candidates.json and add the ticker to portfolio.json.
+Each entry has `ticker`, `added_date`, `reports[]`, `events[]`. Snapshot — presence means actively watching. To stop watching, delete the entry. When you buy a watched name, move its entry from candidates.json into positions-thesis.json (the thesis follows the name from the watch overlay to the held overlay).
 
 ---
 
@@ -174,7 +174,7 @@ When a catalyst event resolves (e.g., Anthropic IPO prices, DOJ issues a remedy 
 
 **Step 2 — What Phase 8 does to catalysts.json**: sets `status: "resolved"`, adds `resolved_date`, `resolving_run`, `outcome`, appends a `status_change` history event.
 
-**Step 3 — What Phase 8 does to portfolio.json / candidates.json**: for each ticker in `tickers_affected`, finds active event entries and appends either a `verdict_change` (if the outcome changes the market verdict) or an `updated` event (if neutral), with `resolving_catalyst` noted in the history.
+**Step 3 — What Phase 8 does to positions-thesis.json / candidates.json**: for each ticker in `tickers_affected`, finds active event entries and appends either a `verdict_change` (if the outcome changes the market verdict) or an `updated` event (if neutral), with `resolving_catalyst` noted in the history.
 
 ---
 
@@ -198,12 +198,12 @@ You can update entries directly in the JSON files at any time.
 }]
 ```
 
-**When you make a trade on a candidate**:
+**When you buy a candidate**:
 1. Delete the entry from candidates.json
-2. Add a new position to portfolio.json and copy over the `reports[]` and `events[]` arrays
+2. Add it to positions-thesis.json, copying over the `reports[]` and `events[]` arrays (the thesis moves to the held overlay)
 
-**When you fully exit a portfolio position**:
-1. Delete the entry from portfolio.json
+**When you fully exit a held position**:
+1. Prune the entry from positions-thesis.json (or keep it as a closed-position record — it no longer implies "held")
 
 The director never auto-deletes or auto-resolves entries. Entries >18 months old without review get a `stale_warning` field added.
 
@@ -268,7 +268,7 @@ Written by `/log-trade`. Each entry is one trade execution.
 | `market_verdict` | string \| null | Market verdict from that report (`"Buy"` / `"Hold"` / `"Avoid"`) |
 | `linked_at` | YYYY-MM-DD | Date the link was made (may differ from trade date for retroactive linking) |
 
-**Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `portfolio.json` or `candidates.json` under `reports[]`.
+**Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `positions-thesis.json` or `candidates.json` under `reports[]`.
 
 ---
 

@@ -68,11 +68,12 @@ You read past runs **only** for these overlap checks and taste-calibration. You 
 
 Read the following files if they exist (skip gracefully if absent):
 
-- `tracking/portfolio.json` → **portfolio_tickers**: set of all tickers in `positions`; also extract their `events` arrays for active conditions to monitor
+- `tracking/brokerage-snapshot.json` → **portfolio_tickers**: set of all `symbol` values across `accounts[].positions[]` — the source of truth for what's actually held. Note the snapshot's `fetched_at` in passing; a stale snapshot still beats guessing.
+- `tracking/positions-thesis.json` → the thesis overlay for held names: extract each entry's `events` arrays for active conditions to monitor. Do **not** derive `portfolio_tickers` from this file — an overlay entry means a thesis is on file, not that the name is held (and a held name may have no entry).
 - `tracking/candidates.json` → **candidate_tickers**: set of all tickers in `entries`; also extract their `events` arrays
 - `tracking/catalysts.json` → **active_catalysts**: `description` text from active entries, keyed by `id`
 
-From the combined `events` arrays of portfolio and candidate tickers, extract:
+From the combined `events` arrays of the thesis overlay and candidate entries, extract:
 - **active_conditions**: `condition` + `watch` text from active `falsifier` and `event_monitor` entries, keyed by `id`
 
 Do not edit any of these files. This context feeds Phase 5 (scoring) and Phase 6 (brief writing).
@@ -144,7 +145,7 @@ signal_counts: gdelt=N hn=N edgar=N
 
 ## Watchlist alerts
 
-Signals matching active event entries in `tracking/portfolio.json`, `tracking/candidates.json`, or `tracking/catalysts.json`.
+Signals matching active event entries in `tracking/positions-thesis.json`, `tracking/candidates.json`, or `tracking/catalysts.json`.
 Show all matches regardless of novelty. A match means this monitored condition may be developing — not that it has confirmed. Frame accordingly.
 
 ### [Entry ID] — <one-line thesis: what trend or condition is this about>
@@ -199,7 +200,7 @@ Signals about tickers in `portfolio_tickers`. Show even if not novel — monitor
 - Do not do primary research — no deep WebFetch digging, no building the actual answer. You triage signals into candidates. The researcher pipeline does the real work, later, only if the user runs `/research`.
 - Do not dispatch `research-director` or any researcher, and do not ask whether to research. The user runs `/research` themselves, separately, if a candidate is worth it.
 - Do not edit anything under `reports/`. You read it for overlap checks only.
-- Do not edit `tracking/portfolio.json`, `tracking/candidates.json`, or `tracking/catalysts.json`. You read them for context; research-director writes them.
+- Do not edit `tracking/brokerage-snapshot.json`, `tracking/positions-thesis.json`, `tracking/candidates.json`, or `tracking/catalysts.json`. You read them for context; `/sync-portfolio` writes the snapshot, research-director writes the rest.
 - Do not write to the Notion Investment Log database. You fetch it read-only for portfolio activity context; `/log-trade` writes it.
 - Do not invent signals or spike numbers. Every metric comes from `signals.json`.
 - Do not paste the full brief back to the orchestrator. Return the terse ranked list; the file is the deliverable.
