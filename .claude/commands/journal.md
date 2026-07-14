@@ -42,7 +42,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
    **Finding candidate runs**:
    - Scan the reflection text for ticker symbols and topic keywords.
-   - Read `tracking/portfolio.json` and `tracking/candidates.json`: any ticker mentioned in the text that has a `reports[]` array contributes those runs.
+   - Read `tracking/positions-thesis.json` and `tracking/candidates.json`: any ticker mentioned in the text that has a `reports[]` array contributes those runs.
    - Scan `reports/` directories (most recent first): surface runs whose slug or `question` frontmatter matches a keyword from the text, plus the 5 most recent runs regardless of match (recent thinking is often what a reflection is reacting to).
    - Deduplicate, sort by date descending, cap at 10.
 
@@ -72,7 +72,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
    **Finding candidate tickers**:
    - Extract ticker-like tokens from the reflection text (uppercase 1–5 letter symbols; also resolve obvious company names you recognize to their ticker).
-   - Tag each against tracking: `[PORTFOLIO]` if in `portfolio.json`, `[CANDIDATE]` if in `candidates.json`, `[NEW]` otherwise.
+   - Tag each against tracking: `[PORTFOLIO]` if held per `brokerage-snapshot.json` (`symbol` values across `accounts[].positions[]` — the holdings source of truth, not the thesis overlay), `[CANDIDATE]` if in `candidates.json`, `[NEW]` otherwise.
    - Also offer any tickers from the research runs the user just linked in step 3.
 
    Present:

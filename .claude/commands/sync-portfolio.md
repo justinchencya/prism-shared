@@ -1,8 +1,8 @@
 ---
-description: Pull the live brokerage state (accounts, balances, positions, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, reconcile it against portfolio.json / candidates.json / trades.json, and review the portfolio (concentration, cash, P&L, held-without-thesis, active falsifiers). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
+description: Pull the live brokerage state (accounts, balances, positions, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, reconcile it against positions-thesis.json / candidates.json / trades.json, and review the portfolio (concentration, cash, P&L, held-without-thesis, active falsifiers). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
 ---
 
-Sync the user's **actual brokerage state** into Prism and review it. SnapTrade (Personal API key) is the source of truth for what is *really* held; `tracking/portfolio.json` and `tracking/trades.json` are what Prism *believes*. This command closes the gap and then reads the portfolio critically — for the user's own thinking, no advice boilerplate.
+Sync the user's **actual brokerage state** into Prism and review it. The brokerage snapshot is the **source of truth for holdings** — what is really held, how much, at what cost. Layered over it: `tracking/positions-thesis.json` is the **thesis overlay** (why each held name is held — `reports[]`/`events[]`, no shares or cost), `tracking/candidates.json` is the same overlay for *watched* names, and `tracking/trades.json` is the intentional, research-linked trade log. This command refreshes the holdings truth, reconciles the thesis overlay against it, and then reads the portfolio critically — for the user's own thinking, no advice boilerplate.
 
 Two modes, chosen automatically by capability, never by asking:
 
@@ -32,21 +32,20 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
    - Exit 2 (credentials missing after all — e.g. empty values) → drop back cleanly (`git switch main && git branch -D sync-portfolio/<id>`) and continue in review-only mode from the committed snapshot.
    - Exit 1 (credentials rejected / network / no accounts) → report the script's stderr, clean up the branch the same way, and stop.
 
-4. **Reconcile** — diff the fresh snapshot against Prism's tracking. Build a numbered list of proposed fixes; **do not write anything yet**:
+4. **Reconcile the thesis overlay against the snapshot** — the snapshot owns "what's held"; this step only keeps the thesis overlay (`positions-thesis.json` = held-name theses, `candidates.json` = watched-name theses) coherent with it. A held name with no thesis is **not** a defect — it needs no stub; it surfaces in Step 5's held-without-thesis review as a ready-to-run `/research`. Build a numbered list of proposed fixes; **do not write anything yet**:
 
-   - **Held but untracked** — a snapshot position whose ticker is in neither `portfolio.json` nor `candidates.json` → propose adding to `portfolio.json`: `{ "ticker": "<T>", "reports": [], "events": [] }`.
-   - **Held but filed as candidate** — ticker present in `candidates.json` → propose moving the entry (with its `reports[]`/`events[]`) into `portfolio.json` and deleting it from candidates.
-   - **Tracked but not held** — a `portfolio.json` position absent from the snapshot → propose removing it (position exited). Flag, don't assume: a transfer or a sub-$1 residual can look like an exit.
+   - **Held, thesis filed under candidates** — a snapshot position whose ticker is in `candidates.json` (you now hold a name you were only watching) → propose moving the entry (with its `reports[]`/`events[]`) into `positions-thesis.json` and deleting it from candidates. The thesis moves from the watch overlay to the held overlay.
+   - **Thesis on an exited name** — a `positions-thesis.json` entry whose ticker is absent from the snapshot (you no longer hold it, but its thesis is still filed as held) → propose pruning the stale entry, or keeping it as a closed-position record. Flag, don't assume: a transfer or a sub-$1 residual can look like an exit.
    - **Unlogged trades** — snapshot activities of type buy/sell with no matching `trades.json` entry (match on ticker + date ±1 day + direction). **Never write `trades.json` here** — it mirrors the Notion Investment Log 1:1 and is owned by `/log-trade`; list the misses and suggest `/log-trade` per trade instead.
-   - **Share-count drift** — ticker in both, but snapshot units disagree materially with what `trades.json` history implies → report the delta (informational; the snapshot is the truth).
+   - **Share-count drift** — a name in both the snapshot and `trades.json`, but snapshot units disagree materially with what `trades.json` history implies → report the delta (informational; the snapshot is the truth).
 
-   Present the write-fixes (first three categories) as a numbered list and ask which to apply — `"1,3"`, `"all"`, or `"none"` — then apply the approved ones on the branch, updating each touched file's `last_updated`. If there are no proposed fixes, say `"Tracking is in sync with the brokerage."` and move on.
+   Present the write-fixes (first two categories) as a numbered list and ask which to apply — `"1,3"`, `"all"`, or `"none"` — then apply the approved ones on the branch, updating each touched file's `last_updated`. If there are no proposed fixes, say `"The thesis overlay is coherent with the brokerage."` and move on.
 
-5. **Review** — the chat-facing product. Read the snapshot (plus `portfolio.json` reports/events and recent `reports/` runs) and write a terse, falsifiable review — Prism voice, investor stance (multi-year holder), no disclaimers:
+5. **Review** — the chat-facing product. Read the snapshot (plus `positions-thesis.json` reports/events and recent `reports/` runs) and write a terse, falsifiable review — Prism voice, investor stance (multi-year holder), no disclaimers:
 
    - **Shape** — total value, cash %, position count, top-3 concentration (% of equity value). Call out single-position concentration explicitly when one name dominates.
    - **Per-position** — units, market value, open P&L vs average cost. Order by weight.
-   - **Held without a thesis** — positions whose ticker has no `reports[]` entry in `portfolio.json`: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions.
+   - **Held without a thesis** — held positions whose ticker has no `reports[]` entry in `positions-thesis.json`: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. This is the overlay's main gap-finder — the snapshot knows *what* is held; this flags *what lacks a why*.
    - **Active events on held names** — surface `events[]` with `status: "active"` (buy triggers, falsifiers, monitors) for held tickers; flag any where recent snapshot activity or price is near the condition.
    - **Thesis staleness** — held names whose latest `reports[]` entry is >6 months old.
    - **Recent activity** — notable buys/sells/dividends/deposits from the lookback window, cross-linked to `trades.json`/journal entries where they exist.
@@ -57,11 +56,11 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 6. **Commit & PR** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json`, plus any tracking files changed in Step 4. Ask via `AskUserQuestion`:
    - "Commit and push this portfolio sync?" (Yes / No)
    - "Open a pull request on GitHub?" (Yes / No)
-   - Only if Step 4 changed `portfolio.json` or `candidates.json` (dashboard inputs): "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
+   - Only if Step 4 changed `positions-thesis.json` or `candidates.json` (dashboard inputs): "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
 
    If regen approved: run `python3 scripts/generate_dashboard.py` now and stage `dashboard/index.html` with the run. **Decline path**: `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise:
    ```bash
-   git add tracking/brokerage-snapshot.json   # + portfolio.json / candidates.json if fixed; + dashboard/index.html if regenerated
+   git add tracking/brokerage-snapshot.json   # + positions-thesis.json / candidates.json if fixed; + dashboard/index.html if regenerated
    git commit -m "sync-portfolio: <YYYY-MM-DD>"
    git push -u origin sync-portfolio/<id>
    ```
@@ -81,7 +80,7 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 ## Examples
 
 `/sync-portfolio`
-→ creds found → branch `sync-portfolio/2026-07-12-091500` → fetch → 2 fixes proposed (VRT held but untracked; SNAP tracked but not held), user applies both → review: 61% top-3 concentration, 4% cash, NOW held 14 months since last thesis check → AskUserQuestion → commit + PR.
+→ creds found → branch `sync-portfolio/2026-07-12-091500` → fetch → 2 fixes proposed (VRT now held → move its thesis from candidates to positions-thesis; SNAP no longer held → prune its stale thesis entry), user applies both → review: 61% top-3 concentration, 4% cash, 3 names held with no research run on file (→ ready-to-run `/research`), NOW held 14 months since last thesis check → AskUserQuestion → commit + PR.
 
 `/sync-portfolio concentration`
 → same flow; the review leads with concentration and position sizing.

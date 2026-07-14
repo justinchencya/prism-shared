@@ -30,8 +30,8 @@ The user is a **long-term investor** (multi-year holds), not a short-term arbitr
 1. The `/research` command gives you the **run directory to use, verbatim** (e.g. `reports/2026-05-28-edge-computing-agentic-ai/`) — its basename already encodes the date and slug. Use exactly that path; do **not** invent your own slug or directory. (The command cut a matching git branch off `main` before dispatching you, so the path must match.) Derive the run's date and slug from the basename when you need them later.
 2. Create that run directory with subdirs `individual/` and `critiques/`. (`tickers/` is created later only if the question is investable.)
 3. Read any user-provided source files now. WebFetch any user-provided URLs once and note key content.
-4. Read `tracking/portfolio.json` if it exists. Build `portfolio_tickers` = set of all tickers in `positions`.
-5. Read `tracking/candidates.json` if it exists. Build `candidate_tickers` = set of all tickers in `entries`.
+4. Read `tracking/brokerage-snapshot.json` if it exists. Build `portfolio_tickers` = set of all `symbol` values across `accounts[].positions[]` — the source of truth for what's held. Also read `tracking/positions-thesis.json` if it exists (the thesis overlay: per-name `reports[]`/`events[]` for held names) — it provides thesis context and Phase 8 write targets, **not** the holdings set; a held name may have no overlay entry.
+5. Read `tracking/candidates.json` if it exists. Build `candidate_tickers` = set of all tickers in `entries`. If a ticker appears in both sets, `portfolio_tickers` wins (it's held; the candidates entry is a leftover for `/sync-portfolio` to reconcile).
 6. Note both sets at the top of `plan.md` under the meta-framing: `Portfolio: [...]  |  Candidates: [...]`. This context shapes ticker badges in the final report and write targets in Phase 8.
 
 ### Phase 1 — Meta-framing (before decomposition)
@@ -248,9 +248,9 @@ Rules baked into the synthesis:
 
 ### Phase 8 — Extract and update tracking items
 
-After writing `final-report.md`, update `tracking/portfolio.json`, `tracking/candidates.json`, and `tracking/catalysts.json`. Read all three files first.
+After writing `final-report.md`, update `tracking/positions-thesis.json`, `tracking/candidates.json`, and `tracking/catalysts.json`. Read all three files first.
 
-#### 8a — Ticker-level events (portfolio.json + candidates.json)
+#### 8a — Ticker-level events (positions-thesis.json + candidates.json)
 
 For each ticker in the final report and its ticker report file, extract:
 1. Hold/Avoid verdict with an explicit price level or condition that would flip to Buy → `type: "buy_trigger"`
@@ -258,7 +258,7 @@ For each ticker in the final report and its ticker report file, extract:
 3. Key Uncertainties naming a future event with an expected window, if ticker-specific → `type: "event_monitor"`
 
 **Where to write:**
-- If ticker is in `portfolio_tickers` (from Phase 0): write to that position's `events` array in `portfolio.json`
+- If ticker is in `portfolio_tickers` (from Phase 0): write to that name's `events` array in `positions-thesis.json`. If the name has no entry there yet (held without a thesis until now), **create one** — `{ "ticker": "<T>", "reports": [], "events": [] }` populated by this run. This is how a held name acquires a thesis; it is not the forbidden empty-stub pattern, because the entry is created only to carry this run's real output.
 - If ticker is in `candidate_tickers` (from Phase 0): write to that entry's `events` array in `candidates.json`
 - If ticker is in neither file (`[NEW]`): **do not create any entry** — new tickers are surfaced to the user in Phase 9
 
@@ -302,7 +302,7 @@ Catalyst ID rule: `<MACRO_KEY>-<YEAR>-<EVENT>` or `<TICKER>-<EVENT>-<YEAR>`. Exa
 
 **Catalyst → events linkage (on resolution):**
 If a catalyst entry is being updated to `status: "resolved"` in this run:
-For each ticker in that catalyst's `tickers_affected`, find active event entries for that ticker in portfolio.json or candidates.json.
+For each ticker in that catalyst's `tickers_affected`, find active event entries for that ticker in positions-thesis.json or candidates.json.
 - If the catalyst outcome changes the market verdict: append a `verdict_change` history event with `"resolving_catalyst": "<catalyst_id>"` in the note.
 - If neutral: append an `updated` history event: `"note": "Catalyst <catalyst_id> resolved — [outcome in one sentence]. Condition unaffected."`
 
