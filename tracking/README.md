@@ -32,7 +32,8 @@ Both `positions-thesis.json` positions and `candidates.json` entries share the s
       "date": "2026-05-29",
       "hypothesis": "2-sentence falsifiable thesis from this run",
       "entry_condition": "Buy below $130 on pullback",
-      "verdict": "Buy"
+      "position_status": "not_held",
+      "verdict": "Watch"
     }
   ],
   "events": [
@@ -57,10 +58,29 @@ Both `positions-thesis.json` positions and `candidates.json` entries share the s
 | `run` | string | Research run slug (matches reports/ directory name) |
 | `date` | YYYY-MM-DD | Date the run completed |
 | `hypothesis` | string | 2-sentence falsifiable thesis from that run |
-| `entry_condition` | string \| null | Buy/add condition if verdict is Hold/Buy; null if Avoid |
-| `verdict` | string | `"Buy"` · `"Hold"` · `"Avoid"` |
+| `entry_condition` | string \| null | The add condition (`Hold`) or initiate condition (`Watch`); null for `Add`/`Buy`/`Trim`/`Exit`/`Avoid` |
+| `position_status` | enum | `"held"` · `"not_held"` — whether the user owned the name **at the time of that run**. Selects the verdict vocabulary. |
+| `verdict` | string | Held → `"Add"` · `"Hold"` · `"Trim"` · `"Exit"` · Not held → `"Buy"` · `"Watch"` · `"Avoid"` |
 
 Reports are appended in chronological order. Reading them in sequence shows how the thesis evolved.
+
+### Position-aware market verdicts
+
+A verdict is advice to act, and the available actions depend on whether a position exists. "Hold" is incoherent for a name the user doesn't own — there is nothing to hold — so the vocabulary branches on `position_status` and the two sets never mix:
+
+| `position_status` | Verdict | Means |
+|---|---|---|
+| `held` | `Add` | Put more money in at the current price |
+| `held` | `Hold` | Keep the position; don't add here |
+| `held` | `Trim` | Reduce, don't exit |
+| `held` | `Exit` | Sell out |
+| `not_held` | `Buy` | Initiate a position at the current price |
+| `not_held` | `Watch` | Interesting, but not this entry — requires a concrete `entry_condition` |
+| `not_held` | `Avoid` | Don't initiate |
+
+Both fields are recorded **as of the run** and are never rewritten afterward. A `Watch` written before the name was bought stays a `Watch` — that is what was true then. A later run on the same (now held) name appends a fresh entry with `"held"` and a held-vocabulary verdict, so `reports[]` read in sequence shows both the thesis *and* the position evolving.
+
+Entries written before this scheme carry `"position_status": "not_held"` with `Watch` where they previously read `Hold`, backfilled from the trade log's position as of each run date.
 
 ---
 
@@ -116,6 +136,7 @@ Each object in an `events[]` array is a watchlist entry:
 |------------|-----------|------------|
 | `created` | First extraction from a research run | `from_verdict: null`, `to_verdict` |
 | `verdict_change` | A later run produces a different market verdict | `from_verdict`, `to_verdict`, `note` |
+| | *If the position flipped between runs the vocabularies differ, so judge by direction, not by the word:* `Watch → Hold` *(bought since, still not adding) is unchanged stance;* `Watch → Add` *is a real change.* | |
 | `updated` | A later run rechecks — verdict unchanged | `note: "Rechecked — verdict unchanged."` |
 | `status_change` | Entry moves to resolved or stale | `from_status`, `to_status`, `note` |
 
@@ -265,7 +286,7 @@ Written by `/log-trade`. Each entry is one trade execution.
 | `run` | string | Research run slug |
 | `date` | YYYY-MM-DD | Date the research run completed |
 | `report_path` | string | Path to the ticker-level report file |
-| `market_verdict` | string \| null | Market verdict from that report (`"Buy"` / `"Hold"` / `"Avoid"`) |
+| `market_verdict` | string \| null | Market verdict from that report, in that run's position vocabulary (`"Add"`/`"Hold"`/`"Trim"`/`"Exit"` if held then, `"Buy"`/`"Watch"`/`"Avoid"` if not) |
 | `linked_at` | YYYY-MM-DD | Date the link was made (may differ from trade date for retroactive linking) |
 
 **Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `positions-thesis.json` or `candidates.json` under `reports[]`.

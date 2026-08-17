@@ -34,6 +34,7 @@ Process:
 You receive:
 - The user's original top-level question and the Phase 1 meta-framings (for context).
 - A ticker symbol + company name.
+- **`position_status: held | not_held`** — whether the user currently owns this name (the director derives it from the brokerage snapshot). This selects the market-verdict vocabulary; see **Market verdict** below. If the dispatch omits it, assume `not_held` and say so in one line in the report.
 - An investment hypothesis (verbatim from the director).
 - A list of open questions to investigate.
 - Paths to specific round-1 reports cited in the ticker's origin — **read these first** before doing your own research.
@@ -78,21 +79,49 @@ Process:
    - Cite as `(SEC 13F via EDGAR full-text search, <fetched_at date>)`. Fold the read into the **Institutional ownership** template section and, where it sharpens it, the Entry condition. A breadth trend that contradicts the fundamental story (thesis bullish, institutions leaving for 2+ quarters) is a divergence worth naming in the verdict reasoning — but like technicals it never overrides a fundamentals verdict on its own.
 4. Form **two separate verdicts**:
    - **Thesis verdict** (Support / Weaken / Inconclusive): does the hypothesis hold up given the evidence?
-   - **Market verdict** (Buy / Hold / Avoid): given current price + consensus + your read of the long-term setup, is this a buy for a **multi-year holder**? The two verdicts can and often will diverge. A correct thesis already discounted into the price is not a buy. A quality compounder at a full but defensible valuation can be a buy. State which lens applies and why.
+   - **Market verdict**: given current price + consensus + your read of the long-term setup, what should the **multi-year holder** do with this name *from where they actually stand*? The vocabulary depends on `position_status` — see below. The two verdicts can and often will diverge. A correct thesis already discounted into the price is not a buy. A quality compounder at a full but defensible valuation can be a buy. State which lens applies and why.
 5. Write the report at the output path using the **ticker template** below.
+
+#### Market verdict — position-aware vocabulary
+
+A verdict is advice to act, and the available actions depend on whether the user already owns the name. "Hold" is meaningless for a name with no position, and "Buy" is imprecise for one already held. So the vocabulary branches on `position_status`, and **the two sets never mix** — using a not-held word on a held name (or vice versa) is a format violation the director will send back.
+
+**`position_status: held`** — the user owns it; the question is what to do with the existing position:
+
+| Verdict | Means |
+|---|---|
+| **Add** | The setup justifies putting more money in at the current price. |
+| **Hold** | Keep the position; don't add here. The thesis is intact but the price or the open questions don't justify more. |
+| **Trim** | Reduce, don't exit. Position is larger than the surviving conviction warrants, or the thesis is partially broken. |
+| **Exit** | Sell out. The thesis is broken, or the remaining upside no longer compensates the risk. |
+
+**`position_status: not_held`** — no position; the question is whether to start one:
+
+| Verdict | Means |
+|---|---|
+| **Buy** | Initiate a position at the current price. |
+| **Watch** | The thesis is interesting but this is not the entry. Requires a concrete Entry condition that would flip it to Buy. |
+| **Avoid** | Don't initiate — the thesis doesn't hold, or no plausible near-term level makes it attractive. |
+
+**Entry condition follows the verdict:**
+- `Add` / `Buy` → write "Currently a buy".
+- `Hold` / `Watch` → the specific price level, multiple, or event that would justify adding (held) or initiating (not held). This is the load-bearing field for these two verdicts — a `Watch` with a vague entry condition is an unfinished verdict.
+- `Trim` / `Exit` / `Avoid` → "n/a — <one-clause reason>".
+
+**Do not soften a verdict by smuggling another one into parentheses.** `Hold (buy on a dip)` and `Watch (would buy at $180)` are not verdicts — the verdict is one word from the correct set, and the nuance belongs in the Entry condition line.
 
 ### Ticker-scan sub-mode (quick runs — all tickers in one pass)
 
 You receive:
 - The user's original top-level question and the Phase 1 meta-framings (for context).
-- A list of **≤5 tickers**, each with: symbol + company name, investment hypothesis (verbatim from the director), open questions, and paths to the round-1 reports in its origin.
+- A list of **≤5 tickers**, each with: symbol + company name, **`position_status: held | not_held`**, investment hypothesis (verbatim from the director), open questions, and paths to the round-1 reports in its origin. `position_status` is per-ticker — a scan can mix held and not-held names, and each one uses its own verdict vocabulary.
 - The output path: `reports/<run>/tickers/ticker-scan.md` — one file covering every ticker.
 
 Process:
 1. Read the cited round-1 reports once (they're shared context for all names).
 2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block (MAs, RSI, momentum, relative strength vs SPY) — fold it into the **Entry condition** line as entry-timing context only (see Step 3c in ticker sub-mode); never as a buy/sell signal. **Skip `fetch_13f_breadth.py` in scan mode** — it takes minutes per name and quick runs don't have the budget; the 13F lens belongs to per-ticker deep dives.
 3. For each ticker, do a **capped** search pass — ~3–4 WebSearch/WebFetch operations per name — targeting only what the verdicts need: the load-bearing open question(s) and anything the stats JSON can't answer. This is a survey, not a deep dive; unanswered open questions go in that ticker's Open/unanswered line, not into more searching.
-4. Form both verdicts per ticker (same Thesis/Market separation and long-term lens as ticker sub-mode).
+4. Form both verdicts per ticker (same Thesis/Market separation, long-term lens, and **position-aware market-verdict vocabulary** as ticker sub-mode — check each name's own `position_status` before picking the word).
 5. Write one file using the **ticker-scan template** below.
 
 ```markdown
@@ -111,12 +140,13 @@ Process:
 
 ### Verdicts
 
+**Position:** Held | Not held
 **Thesis verdict:** Support | Weaken | Inconclusive
-**Market verdict:** Buy | Hold | Avoid
-**Entry condition:** <one line — price level, multiple, or event; "Currently a buy" if Buy>
+**Market verdict:** <Add | Hold | Trim | Exit if Held — Buy | Watch | Avoid if Not held>
+**Entry condition:** <one line — price level, multiple, or event; "Currently a buy" if Add/Buy; "n/a — <reason>" if Trim/Exit/Avoid>
 **Hypothesis summary:** <one sentence — the core testable claim>
 
-<2–3 sentences linking the verdicts. If Thesis=Support but Market≠Buy, say what's priced in, with a sourced figure.>
+<2–3 sentences linking the verdicts. If Thesis=Support but the market verdict isn't Add/Buy, say what's priced in, with a sourced figure.>
 
 | Metric | Value | Source | Date retrieved |
 |--------|-------|--------|----------------|
@@ -135,7 +165,7 @@ Process:
 1. <shared source list across all tickers>
 ```
 
-> **Format rule (non-negotiable):** within each ticker's `### Verdicts` block, the four `**Key:**` lines must appear verbatim, in this order. These fields are parsed programmatically — same rule as the full ticker template.
+> **Format rule (non-negotiable):** within each ticker's `### Verdicts` block, the five `**Key:**` lines must appear verbatim, in this order. These fields are parsed programmatically — same rule as the full ticker template. `**Position:**` must match the `position_status` the director gave you for that ticker, and the market verdict must come from that position's vocabulary.
 
 ### Revision mode
 
@@ -205,14 +235,15 @@ Process:
 
 ## Verdicts
 
+**Position:** Held | Not held
 **Thesis verdict:** Support | Weaken | Inconclusive
-**Market verdict:** Buy | Hold | Avoid
-**Entry condition:** <one line — specific price level, multiple, or event that would justify buying if verdict is Hold or Avoid; write "Currently a buy" if verdict is Buy>
+**Market verdict:** <Add | Hold | Trim | Exit if Held — Buy | Watch | Avoid if Not held>
+**Entry condition:** <one line — specific price level, multiple, or event that would justify adding (Hold) or initiating (Watch); "Currently a buy" if Add/Buy; "n/a — <reason>" if Trim/Exit/Avoid>
 **Hypothesis summary:** <one sentence — the core testable claim, paraphrased from the director's hypothesis>
 
-<2–3 sentences of reasoning linking the two verdicts. If Thesis=Support but Market≠Buy, state explicitly what is already priced in or what heroic assumption the current price requires — with a sourced valuation figure.>
+<2–3 sentences of reasoning linking the two verdicts. If Thesis=Support but the market verdict isn't Add/Buy, state explicitly what is already priced in or what heroic assumption the current price requires — with a sourced valuation figure.>
 
-> **Format rule (non-negotiable):** The four `**Key:**` lines above must appear verbatim in every ticker report, in this order, directly under `## Verdicts`. Do not split into separate `## Market Verdict` / `## Thesis Verdict` sections, do not number the section (e.g. `## 4. Verdict`), do not use ALL-CAPS keys, do not use H3 sub-headers. These fields are parsed programmatically — any deviation breaks the pipeline.
+> **Format rule (non-negotiable):** The five `**Key:**` lines above must appear verbatim in every ticker report, in this order, directly under `## Verdicts`. Do not split into separate `## Market Verdict` / `## Thesis Verdict` sections, do not number the section (e.g. `## 4. Verdict`), do not use ALL-CAPS keys, do not use H3 sub-headers. `**Position:**` must match the `position_status` from your dispatch, and `**Market verdict:**` must be a single bare word from that position's vocabulary — no parenthetical hedges. These fields are parsed programmatically — any deviation breaks the pipeline.
 
 ## What has to be true
 <Load-bearing claims of the hypothesis. Each bullet: claim, source, conviction (low/med/high).>
@@ -281,5 +312,6 @@ Example: `curl -H "User-Agent: $EDGAR_CONTACT_EMAIL" https://data.sec.gov/submis
 - Do not skip the Revision log on revision passes.
 - Do not skip sibling reports when the critique cites them — that's the whole point of the cross-reference.
 - In ticker and ticker-scan modes: do not collapse Thesis and Market verdicts into one call. They are separate and often diverge.
+- In ticker and ticker-scan modes: do not use a market verdict from the wrong position vocabulary — no "Hold" on a name the user doesn't own, no "Buy" on one they already hold (that's "Add"). Check `position_status` before writing the line.
 - In ticker and ticker-scan modes: do not apply short-term arbitrageur logic. The user holds for years.
 - Do not perform any git operations (branch, add, commit, push, or PR). The slash command owns all git.

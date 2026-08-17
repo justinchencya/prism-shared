@@ -265,17 +265,35 @@ def build_timeline(runs: list, trades: list, journal: list | None = None, verdic
     return events
 
 
+# Market verdicts are position-aware: a held name takes Add/Hold/Trim/Exit, a name the
+# user doesn't own takes Buy/Watch/Avoid. Alignment scores a trade against the stance the
+# verdict actually took, on a three-step ladder:
+#   INCREASE  — affirmatively says put money in       (Add, Buy)
+#   DECREASE  — affirmatively says take money out     (Trim, Exit, Avoid)
+#   Hold/Watch are neither. They withhold endorsement without forbidding the trade, so any
+#   action against them is neutral, not misaligned. (Buying into a Hold used to score as
+#   aligned, which read every "keep it, don't add here" as a green light.)
+_INCREASE_VERDICTS = {"add", "buy"}
+_DECREASE_VERDICTS = {"trim", "exit", "avoid"}
+_INCREASE_ACTIONS = {"buy", "add"}
+_DECREASE_ACTIONS = {"sell", "trim"}
+
+
 def _alignment(action: str, verdict: str | None) -> str:
     if not verdict:
         return "neutral"
     action = action.lower()
-    verdict = verdict.lower()
-    if action in ("buy", "add") and verdict in ("buy", "hold"):
-        return "aligned"
-    if action in ("sell", "trim") and verdict == "avoid":
-        return "aligned"
-    if action in ("buy", "add") and verdict == "avoid":
-        return "misaligned"
+    verdict = verdict.lower().strip()
+    if action in _INCREASE_ACTIONS:
+        if verdict in _INCREASE_VERDICTS:
+            return "aligned"
+        if verdict in _DECREASE_VERDICTS:
+            return "misaligned"
+    if action in _DECREASE_ACTIONS:
+        if verdict in _DECREASE_VERDICTS:
+            return "aligned"
+        if verdict in _INCREASE_VERDICTS:
+            return "misaligned"
     return "neutral"
 
 
@@ -769,7 +787,12 @@ h3 { font-size: 14px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; }
 .badge.misaligned { background: #4c0519; color: #fb7185; }
 .badge.neutral { background: #3b2800; color: #fbbf24; }
 .badge.unlinked { background: #1e293b; color: #64748b; }
+/* Market verdicts, colored by stance rather than by word: green = put money in
+   (add/buy), amber = withhold (hold/watch), orange = reduce (trim), red = get out
+   (exit/avoid). Held names use add/hold/trim/exit; not-held use buy/watch/avoid. */
 .badge.hold { background: #3b2800; color: #fbbf24; }
+.badge.watch { background: #3b2800; color: #fbbf24; }
+.badge.exit { background: #4c0519; color: #fb7185; }
 .badge.avoid { background: #4c0519; color: #fb7185; }
 
 /* Summary bar */

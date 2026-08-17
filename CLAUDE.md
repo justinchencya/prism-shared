@@ -200,7 +200,16 @@ tracking/
 
 **candidates.json structure**: `{ entries: [{ ticker, added_date, reports: [], events: [] }] }`. Snapshot — presence means actively watching. To stop watching, delete the entry. When a trade is made, delete from candidates and add to portfolio. Research runs append to `reports[]` and `events[]`.
 
-**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, verdict }` — one entry per research run that touched that ticker.
+**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, position_status, verdict }` — one entry per research run that touched that ticker.
+
+### Position-aware market verdicts
+
+A market verdict is advice to act, so its vocabulary depends on whether a position exists — "Hold" is incoherent for a name the user doesn't own. Every ticker dispatch carries a `position_status` derived from `brokerage-snapshot.json` (held) or not (candidates and new names alike), and the two vocabularies never mix:
+
+- **held** → **Add** (put more in) · **Hold** (keep, don't add) · **Trim** (reduce, don't exit) · **Exit** (sell out)
+- **not held** → **Buy** (initiate) · **Watch** (interesting, not this entry — needs a concrete entry condition) · **Avoid** (don't initiate)
+
+`entry_condition` is load-bearing for `Hold` and `Watch` (what would justify adding / initiating), "Currently a buy" for `Add`/`Buy`, and null for `Trim`/`Exit`/`Avoid`. Both `position_status` and `verdict` are recorded **as of the run** and never rewritten — a `Watch` from before a purchase stays a `Watch`; the next run appends a held-vocabulary entry alongside it. The badge in a final report and the verdict must agree: `[PORTFOLIO]` takes the held set, `[CANDIDATE]`/`[NEW]` the not-held set.
 
 ### Event entry ID format (SCREAMING-KEBAB-CASE, deterministic)
 

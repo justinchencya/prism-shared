@@ -55,7 +55,7 @@ Map the report to a show structure. Write the outline to `<report-dir>/podcast/o
 3. **Ticker round (if investable)** — for each `### $TICKER` block in the final report:
    - Moderator: "Next up — $TICKER."
    - Lead: reads the *Company snapshot* and *Why this ticker is in this report* as a natural intro (rephrased — do not robotically read field labels). Then the thesis verdict + load-bearing claims.
-   - Skeptic: market verdict if it diverges from thesis, plus the falsifiers.
+   - Skeptic: market verdict if it diverges from thesis, plus the falsifiers. The verdict word is position-aware (Add/Hold/Trim/Exit for a held name, Buy/Watch/Avoid for one that isn't) — say the word the report used, and let the surrounding line carry whether it's about an existing position or a new one.
    - Moderator: one-sentence summary, next ticker.
 4. **Uncertainty round (Skeptic-led)** — walk the "Key uncertainties" section. What we don't know, what would change the picture.
 5. **Falsifier watchlist (Moderator-led, Lead/Skeptic chime in)** — what specific data points to watch next.

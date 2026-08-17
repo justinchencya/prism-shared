@@ -32,7 +32,9 @@ The user is a **long-term investor** (multi-year holds), not a short-term arbitr
 3. Read any user-provided source files now. WebFetch any user-provided URLs once and note key content.
 4. Read `tracking/brokerage-snapshot.json` if it exists. Build `portfolio_tickers` = set of all `symbol` values across `accounts[].positions[]` — the source of truth for what's held. Also read `tracking/positions-thesis.json` if it exists (the thesis overlay: per-name `reports[]`/`events[]` for held names) — it provides thesis context and Phase 8 write targets, **not** the holdings set; a held name may have no overlay entry.
 5. Read `tracking/candidates.json` if it exists. Build `candidate_tickers` = set of all tickers in `entries`. If a ticker appears in both sets, `portfolio_tickers` wins (it's held; the candidates entry is a leftover for `/sync-portfolio` to reconcile).
-6. Note both sets at the top of `plan.md` under the meta-framing: `Portfolio: [...]  |  Candidates: [...]`. This context shapes ticker badges in the final report and write targets in Phase 8.
+6. Note both sets at the top of `plan.md` under the meta-framing: `Portfolio: [...]  |  Candidates: [...]`. This context shapes ticker badges in the final report, write targets in Phase 8, and — most consequentially — each ticker's `position_status`, which selects the market-verdict vocabulary (Phase 6b).
+
+**`position_status` is derived from `portfolio_tickers` alone.** A ticker in `portfolio_tickers` is `held`; everything else — candidates and new names alike — is `not_held`. Being on the watchlist is not a position. Match symbols exactly as the snapshot spells them, but reconcile obvious formatting variants of the same security (`BRKB` in the snapshot vs `BRK-B` in the overlay) rather than treating them as two names; when in doubt that a variant is the same security, treat it as held and say so in one line in `plan.md`.
 
 ### Phase 1 — Meta-framing (before decomposition)
 
@@ -113,7 +115,7 @@ Per-report critique checklist — apply to every report:
 5. Are uncertainties stated, or did the researcher write fluently past unknowns?
 6. Are the findings specific enough to be challenged later, or so hedged they say nothing?
 7. **Does this report engage with findings in sibling reports that intersect its bundle?** If not, name which sibling report(s) it must cross-reference and how (the specific claim, contradiction, or shared blind spot from Phase 5a).
-8. **(Ticker reports only)** Does the report open with a clear *Company snapshot* (what the business does + segment mix) and *Why this ticker is in this report* (explicit tie from the run's question to this name) **before** verdicts? Does the final-report ticker block carry the same two fields at the top of the `### $TICKER` section? If either is missing, weak, or just restates the ticker symbol, send back for revision — a reader who's never heard of the company should be oriented before being told to buy/hold/avoid it.
+8. **(Ticker reports only)** Does the report open with a clear *Company snapshot* (what the business does + segment mix) and *Why this ticker is in this report* (explicit tie from the run's question to this name) **before** verdicts? Does the final-report ticker block carry the same two fields at the top of the `### $TICKER` section? If either is missing, weak, or just restates the ticker symbol, send back for revision — a reader who's never heard of the company should be oriented before being told what to do with it.
 
 Dispatch **only** the researchers whose reports need work, in **revision mode**: pass the existing report path, the per-report critique, and (when relevant) sibling report paths plus the specific cross-report observation the researcher must engage with. Researchers edit the file in place.
 
@@ -136,7 +138,7 @@ Create the `reports/<run>/tickers/` directory now.
 
 #### 6b — Dispatch ticker researchers (parallel)
 
-**Quick mode**: spawn **one** researcher in **ticker-scan sub-mode** instead of one per ticker. Its prompt includes the user's original question, the Phase 1 meta-framings, and — for every ticker in `ticker-hypotheses.md` — the symbol + company name, the hypothesis (verbatim), the open questions (verbatim), and the round-1 report paths from its origin. Output path: `reports/<run>/tickers/ticker-scan.md`. The scan must still run `scripts/fetch_ticker_stats.py` per ticker and produce both verdicts per name as the standard four `**Key:**` lines under a `### Verdicts` header inside each `## $TICKER` section (the scan file nests one level deeper than a per-ticker report; the four lines themselves are identical). Then skip 6c and go to Phase 7.
+**Quick mode**: spawn **one** researcher in **ticker-scan sub-mode** instead of one per ticker. Its prompt includes the user's original question, the Phase 1 meta-framings, and — for every ticker in `ticker-hypotheses.md` — the symbol + company name, **its own `position_status`**, the hypothesis (verbatim), the open questions (verbatim), and the round-1 report paths from its origin. Output path: `reports/<run>/tickers/ticker-scan.md`. The scan must still run `scripts/fetch_ticker_stats.py` per ticker and produce both verdicts per name as the standard five `**Key:**` lines under a `### Verdicts` header inside each `## $TICKER` section (the scan file nests one level deeper than a per-ticker report; the five lines themselves are identical). Then skip 6c and go to Phase 7.
 
 Otherwise (low/medium/high), spawn one researcher agent **per ticker, all in a single message**. Each prompt includes:
 
@@ -148,9 +150,13 @@ Otherwise (low/medium/high), spawn one researcher agent **per ticker, all in a s
 - Output path: `reports/<run>/tickers/<TICKER>.md` — use the ticker symbol exactly as given, preserving hyphens (e.g. `BRK-B.md`, not `BRKB.md`).
 - Mode: **initial (ticker sub-mode)**.
 - **13F breadth flag**: `include_13f: yes` when effort is **high** OR the user explicitly asked for the institutional/13F lens in the question or sources; otherwise `include_13f: no`. The researcher's Step 3d (`scripts/fetch_13f_breadth.py`, minutes per name) runs only on `yes`.
+- **`position_status: held | not_held`** — `held` if the ticker is in `portfolio_tickers` (Phase 0), `not_held` otherwise (candidates included). Non-optional: it selects the researcher's market-verdict vocabulary.
 - Explicit instruction: the report must produce **two separate verdicts**:
   - **Thesis verdict** — does the hypothesis hold up given the evidence? (Support / Weaken / Inconclusive)
-  - **Market verdict** — given current price, valuation multiples, and consensus expectations, is this a Buy / Hold / Avoid **for a long-term investor**? A quality compounder at full valuation can still be a Buy if the multi-year runway is durable. A name pricing in assumptions even base-case multi-year execution can't justify is not, even if the thesis is directionally right. The two verdicts can and often will diverge — state both explicitly.
+  - **Market verdict** — given current price, valuation multiples, and consensus expectations, what should a **long-term investor** do with this name *from the position they actually hold*? The vocabulary is position-aware and the two sets never mix:
+    - `position_status: held` → **Add** (put more in here) / **Hold** (keep, don't add) / **Trim** (reduce, don't exit) / **Exit** (sell out)
+    - `position_status: not_held` → **Buy** (initiate here) / **Watch** (interesting, not at this price — needs a concrete entry condition) / **Avoid** (don't initiate)
+    A quality compounder at full valuation can still be an Add/Buy if the multi-year runway is durable. A name pricing in assumptions even base-case multi-year execution can't justify is not, even if the thesis is directionally right. The two verdicts can and often will diverge — state both explicitly.
 
 #### 6c — Critique & iterate (ticker stage)
 
@@ -160,9 +166,11 @@ Apply the same Phase-5 critique discipline to ticker reports. Cross-report pass 
 
 Mandatory checks for ticker reports:
 
-- **Format compliance (check first):** Does the `## Verdicts` section contain exactly four `**Key:** Value` lines in this order: `**Thesis verdict:**`, `**Market verdict:**`, `**Entry condition:**`, `**Hypothesis summary:**`? If the researcher used any alternate structure (`## Market Verdict`, `## 4. Verdict`, `**MARKET VERDICT:**`, H3 sub-headers, etc.), send back for revision with the exact required block — do not accept a non-compliant format regardless of content quality.
+- **Format compliance (check first):** Does the `## Verdicts` section contain exactly five `**Key:** Value` lines in this order: `**Position:**`, `**Thesis verdict:**`, `**Market verdict:**`, `**Entry condition:**`, `**Hypothesis summary:**`? If the researcher used any alternate structure (`## Market Verdict`, `## 4. Verdict`, `**MARKET VERDICT:**`, H3 sub-headers, etc.), send back for revision with the exact required block — do not accept a non-compliant format regardless of content quality.
+- **Verdict vocabulary compliance:** Does `**Position:**` match the `position_status` you dispatched, and is `**Market verdict:**` a single bare word from *that position's* set — `Add`/`Hold`/`Trim`/`Exit` for Held, `Buy`/`Watch`/`Avoid` for Not held? A cross-vocabulary verdict (a "Hold" on a name the user doesn't own, a "Buy" on one they do) or a parenthetical hedge (`Hold (buy on a dip)`) is an automatic revision — the nuance belongs in Entry condition.
 - Are both verdicts (Thesis + Market) explicitly stated and reasoned?
-- If Thesis = Support but Market ≠ Buy, does the report clearly explain *why* (priced in, heroic assumptions, etc.) with sourced valuation evidence?
+- Does a `Hold` or `Watch` carry a **concrete** Entry condition (price level, multiple, or event)? A vague one is an unfinished verdict — send it back.
+- If Thesis = Support but the market verdict isn't Add/Buy, does the report clearly explain *why* (priced in, heroic assumptions, etc.) with sourced valuation evidence?
 - Are current price and key valuation multiples sourced with retrieval dates?
 - Does the long-term lens get applied, or did the researcher fall into short-term arb thinking?
 
@@ -197,10 +205,12 @@ investable: <yes/no>
 
 | Ticker | What it does | Thesis | Market | Reasoning |
 |---|---|---|---|---|
-| $TICKER1 `[BADGE]` | <≤8 words: the business in plain terms> | Support / Weaken / Inconclusive | Buy / Hold / Avoid | <one phrase: the load-bearing why behind the market verdict> |
+| $TICKER1 `[BADGE]` | <≤8 words: the business in plain terms> | Support / Weaken / Inconclusive | <Add/Hold/Trim/Exit if held — Buy/Watch/Avoid if not> | <one phrase: the load-bearing why behind the market verdict> |
 | $TICKER2 `[BADGE]` | ... | ... | ... | ... |
 
 <Rows must match the `### $TICKER` subsections exactly — same tickers, same verdicts, same badges. The table is a digest, not a place for any claim that isn't already in a ticker subsection.>
+
+<**Market column vocabulary is position-aware and must agree with the badge**: a `[PORTFOLIO]` row takes Add / Hold / Trim / Exit; a `[CANDIDATE]` or `[NEW]` row takes Buy / Watch / Avoid. A "Hold" next to a `[CANDIDATE]` badge is a contradiction — the user owns nothing to hold.>
 
 # <Meta-trend 1: short falsifiable headline>
 
@@ -209,14 +219,16 @@ investable: <yes/no>
 ## Investment thesis 1.1: <short headline>
 <2–4 sentences: the thesis, what has to be true on a multi-year horizon, what kills it. [NN] / $TICKER refs.>
 
-### $TICKER1 — <Market verdict: Buy / Hold / Avoid> `[PORTFOLIO]` | `[CANDIDATE]` | `[NEW]`
+### $TICKER1 — <Market verdict> `[PORTFOLIO]` | `[CANDIDATE]` | `[NEW]`
 
 Badge rule: `[PORTFOLIO]` if the ticker is in `portfolio_tickers`, `[CANDIDATE]` if in `candidate_tickers`, `[NEW]` if neither. Use exactly one badge per ticker block.
+
+Verdict rule: the badge determines the vocabulary. `[PORTFOLIO]` → Add / Hold / Trim / Exit. `[CANDIDATE]` or `[NEW]` → Buy / Watch / Avoid. This must match the `**Position:**` line in the ticker's own report.
 
 - **Company snapshot**: One sentence — what the business does, primary revenue segments with rough mix, market cap / size class. (Reader should know what the company is without prior knowledge. Terse, operator-level — not a Wikipedia lede.)
 - **Why this ticker is in this report**: One sentence — explicit tie from the run's central question to this specific company's business (e.g., "SpaceX IPO re-rates the listed-space comp set; VSAT is the public MSS-spectrum operator most directly comped against Starlink.").
 - **Thesis verdict**: Support / Weaken / Inconclusive — one line.
-- **Market verdict**: Buy / Hold / Avoid — one line. If Thesis=Support but Market≠Buy, explicitly say why (e.g., "priced in at $X for the next 12 months and still attractive on a 5-year hold given Y" → Buy; "priced for perfection that even base-case multi-year execution can't justify" → Hold/Avoid).
+- **Market verdict**: one word from the badge's vocabulary (see Verdict rule above) — one line. If Thesis=Support but the verdict isn't Add/Buy, explicitly say why (e.g., "priced in at $X for the next 12 months and still attractive on a 5-year hold given Y" → Buy; "priced for perfection that even base-case multi-year execution can't justify" → Watch/Avoid, or Hold/Trim if held).
 - Load-bearing claims (what has to be true), key numbers + valuation context, falsifiers — 3–6 bullets max. $TICKER inline refs to the ticker report file.
 
 ### $TICKER2 — <verdict>
@@ -253,7 +265,7 @@ After writing `final-report.md`, update `tracking/positions-thesis.json`, `track
 #### 8a — Ticker-level events (positions-thesis.json + candidates.json)
 
 For each ticker in the final report and its ticker report file, extract:
-1. Hold/Avoid verdict with an explicit price level or condition that would flip to Buy → `type: "buy_trigger"`
+1. A verdict that is **not** Add/Buy but carries an explicit price level or condition that would flip it to Add/Buy → `type: "buy_trigger"`. In practice this is every `Hold` and `Watch` with a real Entry condition, plus any `Trim`/`Exit`/`Avoid` that names a level at which the name becomes interesting again.
 2. Falsifier bullets requiring ongoing monitoring (quarterly metrics, regulatory outcomes, competitive data points — not established historical facts) → `type: "falsifier"`
 3. Key Uncertainties naming a future event with an expected window, if ticker-specific → `type: "event_monitor"`
 
@@ -268,10 +280,13 @@ For each ticker in the final report and its ticker report file, extract:
   "run": "<run-slug>",
   "date": "<YYYY-MM-DD>",
   "hypothesis": "<2-sentence falsifiable thesis from this run>",
-  "entry_condition": "<buy/add condition if verdict is Hold/Buy; null otherwise>",
-  "verdict": "<Buy | Hold | Avoid>"
+  "entry_condition": "<the add condition (Hold) or initiate condition (Watch); null for Add/Buy/Trim/Exit/Avoid>",
+  "position_status": "<held | not_held — as of this run>",
+  "verdict": "<Add | Hold | Trim | Exit  if held  —  Buy | Watch | Avoid  if not_held>"
 }
 ```
+
+`verdict` and `position_status` must agree: the held vocabulary only ever appears with `"held"`, the not-held vocabulary only with `"not_held"`. Both are recorded **as of this run** and are never rewritten later — a `Watch` from a run predating the purchase stays a `Watch`, because that is what was true when it was written. A later run on the same name (now held) simply appends a new entry with `"held"` and a held-vocabulary verdict.
 Append to the ticker's `reports` array in the appropriate file. Do not overwrite — append.
 
 **Event ID generation rule (SCREAMING-KEBAB-CASE):**
@@ -285,7 +300,7 @@ Append to the ticker's `reports` array in the appropriate file. Do not overwrite
 **Before creating any event entry:**
 
 Search the ticker's `events` array by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. If a match is found:
-- Compare the current run's verdict to the most recent `history` entry's `to_verdict`.
+- Compare the current run's verdict to the most recent `history` entry's `to_verdict`. If the position changed between the two runs (the name was bought or sold in between), the vocabularies differ and a literal string comparison will always read as "changed" — judge by **direction**, not by the word: `Watch → Hold` (bought since the last run, still not adding) is *unchanged* stance; `Watch → Add` is a real change. Note the position flip in the history `note` either way.
 - **If verdict changed**: append `{ "event": "verdict_change", "from_verdict": <prior>, "to_verdict": <new>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <why it changed> }`. Update the entry's top-level `status` if the change implies resolution.
 - **If verdict unchanged**: append `{ "event": "updated", "run": <slug>, "date": <today>, "note": "Rechecked — verdict unchanged." }`. Update `reviewed`.
 - Do not create a duplicate entry in either case.
@@ -307,7 +322,7 @@ For each ticker in that catalyst's `tickers_affected`, find active event entries
 - If neutral: append an `updated` history event: `"note": "Catalyst <catalyst_id> resolved — [outcome in one sentence]. Condition unaffected."`
 
 **What NOT to extract**:
-- Buy verdicts on names already rated Buy (no action needed)
+- Add/Buy verdicts on names already rated Add/Buy (no action needed)
 - Load-bearing claims that are established historical facts
 - Uncertainties with no expected monitoring event or timeline
 - Bull-case price targets with no actionable entry condition
@@ -326,7 +341,7 @@ Reply with **only**:
 5. Revision rounds actually run (split: round-1 / ticker).
 6. Surviving uncertainties — 1–3 sentences max.
 7. Count of new tracking entries added (portfolio/candidates events + catalysts combined), or "0 — no new watch items extracted."
-8. **New tickers prompt** (investable runs only): if any tickers in the final report are in neither `portfolio_tickers` nor `candidate_tickers`, list them with their one-line market verdict and ask the user: "Add any of these to candidates.json?" Wait for the user's response, then write the selected tickers as new entries (`{ ticker, added_date: today, reports: [<this run's entry>], events: [<extracted events>] }`) to `tracking/candidates.json`. If the user says none or skips, do nothing.
+8. **New tickers prompt** (investable runs only): if any tickers in the final report are in neither `portfolio_tickers` nor `candidate_tickers`, list them with their one-line market verdict (necessarily Buy / Watch / Avoid — a `[NEW]` name is by definition not held) and ask the user: "Add any of these to candidates.json?" Wait for the user's response, then write the selected tickers as new entries (`{ ticker, added_date: today, reports: [<this run's entry>], events: [<extracted events>] }`) to `tracking/candidates.json`. If the user says none or skips, do nothing.
 
 Do not paste report contents beyond the verdict table (point 2). Do not summarize the synthesis prose. The verdict table is the only at-a-glance digest you reproduce inline; everything else stays in the file on disk. If you find yourself writing more than the verdict table plus ~10 lines back, you are duplicating the report — stop and trim.
 
@@ -339,7 +354,7 @@ When invoking researchers via the `Agent` tool with `subagent_type: researcher`:
 - In revision mode where a sibling report was cited in the critique, include the sibling's path and tell the researcher to read it before editing.
 - Always include the user's original top-level question for context.
 - Tell them to link every empirical claim to a source URL or file path.
-- For ticker dispatches, reiterate the long-term investor stance and the Thesis/Market verdict separation.
+- For ticker dispatches, reiterate the long-term investor stance, the Thesis/Market verdict separation, and each ticker's `position_status` with the vocabulary it selects.
 
 ## When to ask the user
 
@@ -358,4 +373,5 @@ When invoking researchers via the `Agent` tool with `subagent_type: researcher`:
 - Do not invent connections, contradictions, or cascades that aren't actually in the reports.
 - Do not include `$TICKER` subsections for tickers that have no per-ticker report file (in quick mode: no `## $TICKER` section in `tickers/ticker-scan.md`). If you want a ticker the per-ticker researchers didn't cover, dispatch another bundle — do not fill it in from priors.
 - Do not collapse Thesis verdict and Market verdict into one call. They are separate and often diverge.
+- Do not issue or accept a market verdict from the wrong position vocabulary. "Hold" on a name the user doesn't own is the specific error this rule exists to prevent — there is no position to hold, and the honest verdict is Buy, Watch, or Avoid.
 - Do not perform any git operations (branch, add, commit, push, or PR). The `/research` command owns all git.

@@ -72,11 +72,11 @@ The Investment Log identifiers are read from the environment so the engine carri
    ```
    Research runs mentioning [TICKER]:
      1. 2026-06-07 | ai-semi-dip-fed-spacex             | verdict: Buy
-     2. 2026-06-07 | whitehouse-ai-semiconductor-invest  | verdict: Buy
-     3. 2026-05-31 | mobile-agentic-cloud-stack          | verdict: Hold
+     2. 2026-06-07 | whitehouse-ai-semiconductor-invest  | verdict: Add
+     3. 2026-05-31 | mobile-agentic-cloud-stack          | verdict: Watch
    Link to research (e.g. "1,3"), "all", or "none":
    ```
-   - `verdict` comes from the `reports[]` entry in positions-thesis.json/candidates.json. For runs found only via file scan (not in tracking), show `verdict: (untracked)`.
+   - `verdict` comes from the `reports[]` entry in positions-thesis.json/candidates.json. Verdicts are position-aware and reflect the position **as of that run** — `Add`/`Hold`/`Trim`/`Exit` if the name was held then, `Buy`/`Watch`/`Avoid` if not — so a mixed list is normal for a name bought partway through its research history. Copy the verdict verbatim; never restate it in the other vocabulary. For runs found only via file scan (not in tracking), show `verdict: (untracked)`.
    - If more than 10 runs exist, note `"...and N older runs (enter 'all' to include all)"`.
 
    **Parse the response**:
