@@ -19,8 +19,8 @@ Writes:
   <output-path>   JSON snapshot:
     fetched_at    — ISO-8601 UTC timestamp (consumers judge staleness from this)
     accounts[]    — per connected account: institution, masked number, total
-                    balance, cash, positions[], recent activities[]
-    totals        — market value / cash summed across accounts
+                    balance, cash, positions[], options[], recent activities[]
+    totals        — market value / cash / options market value across accounts
     warnings[]    — per-source degradations (a dead sub-endpoint never crashes
                     the whole fetch)
 
@@ -58,6 +58,8 @@ BASE = "https://api.snaptrade.com"
 API_PREFIX = "/api/v1"
 DEFAULT_LOOKBACK_DAYS = 90
 ACTIVITIES_PAGE_SIZE = 250
+OPTION_MULTIPLIER = 100        # shares per standard contract
+MINI_OPTION_MULTIPLIER = 10    # shares per mini contract
 
 
 def log(msg: str) -> None:
@@ -174,6 +176,61 @@ def normalize_position(position: dict) -> dict:
     }
 
 
+def normalize_option(holding: dict) -> dict:
+    """One open option contract.
+
+    SnapTrade quotes `price` per share but `average_purchase_price` per
+    contract, so the two need different scaling to be comparable. `units` is
+    signed: negative means short (written), which is what a covered call or a
+    cash-secured put looks like. market_value keeps that sign — a short
+    contract is a liability, not an asset.
+    """
+    contract = dig(holding, "symbol", "option_symbol", default={}) or {}
+    underlying = contract.get("underlying_symbol") or {}
+    multiplier = MINI_OPTION_MULTIPLIER if contract.get("is_mini_option") else OPTION_MULTIPLIER
+
+    units = holding.get("units")
+    price = holding.get("price")
+    market_value = None
+    if isinstance(units, (int, float)) and isinstance(price, (int, float)):
+        market_value = round(units * price * multiplier, 2)
+
+    direction = ""
+    if isinstance(units, (int, float)) and units:
+        direction = "Short" if units < 0 else "Long"
+
+    return {
+        "underlying": underlying.get("symbol") or "",
+        "description": underlying.get("description") or "",
+        "occ_symbol": (contract.get("ticker") or "").strip(),
+        "option_type": (contract.get("option_type") or "").upper(),
+        "direction": direction,
+        "strike": contract.get("strike_price"),
+        "expiration_date": contract.get("expiration_date") or "",
+        "contracts": units,
+        "multiplier": multiplier,
+        "price": price,
+        "market_value": market_value,
+        "average_purchase_price": holding.get("average_purchase_price"),
+        "currency": dig(underlying, "currency", "code", default="USD"),
+    }
+
+
+def fetch_options(client: SnapTradeClient, account_id: str, warnings: list) -> list:
+    """Open option contracts. Absent for brokerages that don't expose options —
+    a 404/400 there means "not supported", not a failure worth warning about."""
+    try:
+        raw = client.get(f"/accounts/{account_id}/options")
+    except urllib.error.HTTPError as err:
+        if err.code not in (400, 404):
+            warnings.append(f"options({account_id}): {http_error_detail(err)}")
+        return []
+    except Exception as err:
+        warnings.append(f"options({account_id}): {err}")
+        return []
+    return raw if isinstance(raw, list) else []
+
+
 def normalize_activity(activity: dict) -> dict:
     sym = dig(activity, "symbol", "symbol") or dig(activity, "symbol", "raw_symbol") or ""
     if isinstance(sym, dict):  # some payloads nest one level deeper
@@ -274,6 +331,10 @@ def main() -> None:
         except Exception as err:
             warnings.append(f"balances({account_id}): {err}")
 
+        options = sorted((normalize_option(o)
+                          for o in fetch_options(client, account_id, warnings)),
+                         key=lambda o: (o["expiration_date"], o["underlying"]))
+
         activities = [normalize_activity(a)
                       for a in fetch_activities(client, account_id, start_date, end_date, warnings)]
         activities.sort(key=lambda a: a["date"], reverse=True)
@@ -292,6 +353,7 @@ def main() -> None:
             },
             "positions": sorted((normalize_position(p) for p in raw_positions or []),
                                 key=lambda p: p["market_value"] or 0, reverse=True),
+            "options": options,
             "activities": activities,
         })
 
@@ -299,13 +361,15 @@ def main() -> None:
                       if isinstance(a["balance"]["total"], (int, float)))
     total_cash = sum(a["balance"]["cash"] for a in accounts
                      if isinstance(a["balance"]["cash"], (int, float)))
+    total_options = sum(o["market_value"] for a in accounts for o in a["options"]
+                        if isinstance(o["market_value"], (int, float)))
 
     snapshot = {
         "fetched_at": now_iso(),
         "source": "snaptrade",
         "lookback_days": lookback,
         "totals": {"market_value": round(total_value, 2), "cash": round(total_cash, 2),
-                   "currency": "USD"},
+                   "options_market_value": round(total_options, 2), "currency": "USD"},
         "accounts": accounts,
         "warnings": warnings,
     }
@@ -313,8 +377,9 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(snapshot, indent=2) + "\n")
     position_count = sum(len(a["positions"]) for a in accounts)
+    option_count = sum(len(a["options"]) for a in accounts)
     log(f"wrote {out_path} — {len(accounts)} account(s), {position_count} position(s), "
-        f"{len(warnings)} warning(s)")
+        f"{option_count} option(s), {len(warnings)} warning(s)")
     for w in warnings:
         log(f"  warning: {w}")
 
