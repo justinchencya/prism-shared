@@ -1,5 +1,5 @@
 ---
-description: Pull the live brokerage state (accounts, balances, positions, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, reconcile it against positions-thesis.json / candidates.json / trades.json, and review the portfolio (concentration, cash, P&L, held-without-thesis, active falsifiers). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
+description: Pull the live brokerage state (accounts, balances, positions, open option contracts, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, reconcile it against positions-thesis.json / candidates.json / trades.json, and review the portfolio (concentration, cash, P&L, held-without-thesis, active falsifiers). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
 ---
 
 Sync the user's **actual brokerage state** into Prism and review it. The brokerage snapshot is the **source of truth for holdings** — what is really held, how much, at what cost. Layered over it: `tracking/positions-thesis.json` is the **thesis overlay** (why each held name is held — `reports[]`/`events[]`, no shares or cost), `tracking/candidates.json` is the same overlay for *watched* names, and `tracking/trades.json` is the intentional, research-linked trade log. This command refreshes the holdings truth, reconciles the thesis overlay against it, and then reads the portfolio critically — for the user's own thinking, no advice boilerplate.
@@ -28,7 +28,7 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
    ```bash
    python3 scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json
    ```
-   - Exit 0 → snapshot written; surface any warnings the script printed (a degraded sub-source is worth the user knowing about, not worth stopping for).
+   - Exit 0 → snapshot written (accounts, positions, open option contracts, activities); surface any warnings the script printed (a degraded sub-source is worth the user knowing about, not worth stopping for).
    - Exit 2 (credentials missing after all — e.g. empty values) → drop back cleanly (`git switch main && git branch -D sync-portfolio/<id>`) and continue in review-only mode from the committed snapshot.
    - Exit 1 (credentials rejected / network / no accounts) → report the script's stderr, clean up the branch the same way, and stop.
 
@@ -45,6 +45,10 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 
    - **Shape** — total value, cash %, position count, top-3 concentration (% of equity value). Call out single-position concentration explicitly when one name dominates.
    - **Per-position** — units, market value, open P&L vs average cost. Order by weight.
+   - **Open options** — read `accounts[].options[]`. Group by underlying and report: direction (`Short`/`Long`), type, strike, expiry, contracts, and current market value (signed — a short contract is a liability). Then the two things the raw list doesn't say:
+     - **Share encumbrance** — for each short call, `contracts x multiplier` shares of the underlying are committed. Compare against the held share count and say what fraction is encumbered; a short call on a name held below the contract size is **naked**, flag it explicitly.
+     - **Expiry proximity** — contracts expiring within ~2 weeks, and any whose expiry has already passed relative to today (a stale line the brokerage hasn't cleared yet). Note assignment risk where the underlying's current price is through the strike.
+     State "no open option contracts" when the array is empty, and say so plainly if `options[]` is absent from an older snapshot rather than inferring none.
    - **Held without a thesis** — held positions whose ticker has no `reports[]` entry in `positions-thesis.json`: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. This is the overlay's main gap-finder — the snapshot knows *what* is held; this flags *what lacks a why*.
    - **Active events on held names** — surface `events[]` with `status: "active"` (buy triggers, falsifiers, monitors) for held tickers; flag any where recent snapshot activity or price is near the condition.
    - **Thesis staleness** — held names whose latest `reports[]` entry is >6 months old.
