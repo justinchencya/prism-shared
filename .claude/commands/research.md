@@ -28,17 +28,31 @@ git switch -c research/<id>
 
 If the switch, pull, or branch fails, report and stop — never stash, reset, or force.
 
-Then call the `research-director` agent via the `Agent` tool with a prompt that includes:
+### Orchestrating the director (you dispatch; the director only plans/critiques/synthesizes)
 
-- The user's question, verbatim.
-- The sources list (or "none provided").
-- The effort level.
-- Today's date.
-- **The run directory to use, verbatim: `reports/<id>/`.** The director must write into exactly this dir — it does not invent its own slug or path.
+The `research-director` agent runs as a subagent and the harness disables nested `Agent` dispatch, so **it has no way to spawn researchers** — only this top-level session can. The director's job (`.claude/agents/research-director.md`) is planning, allocation, critique, and synthesis; it signals every point where researchers are needed by writing a dispatch manifest to `reports/<id>/dispatch-manifest.json` and stopping with the exact line `DISPATCH_REQUIRED: reports/<id>/dispatch-manifest.json`. You read that manifest, dispatch the listed researchers yourself via the `Agent` tool, then resume the director. Loop this until the director finishes Phase 9 (no more manifests) instead of stopping.
 
-The director handles everything else: planning, allocation, parallel dispatch, adaptive critique loop, and final synthesis — all on the branch you just created.
+1. **Spawn the director** via the `Agent` tool (`subagent_type: research-director`, foreground — your next action depends on its result). The prompt includes:
+   - The user's question, verbatim.
+   - The sources list (or "none provided").
+   - The effort level.
+   - Today's date.
+   - **The run directory to use, verbatim: `reports/<id>/`.** The director must write into exactly this dir — it does not invent its own slug or path.
 
-After the director reports `final-report.md` is written:
+   Note the agent's name/id from the result (or `ListAgents` if it's not directly in the result) — you need it to resume the director below.
+
+2. **If the `Agent` tool is unavailable or the spawn fails**: stop and tell the user plainly — "the research pipeline requires the `Agent` tool to dispatch researchers in parallel; it isn't available in this session, so I'm not running the director inline." Do **not** fall back to doing the research yourself or letting the director do it inline. This is the one guard the whole redesign exists to enforce — never degrade silently.
+
+3. **Dispatch loop** — repeat until the director's reply is the Phase 9 report-back (final report path + verdict table, etc.) rather than a `DISPATCH_REQUIRED` line:
+   a. Read `reports/<id>/dispatch-manifest.json`. It has `{ "phase": "...", "dispatches": [{ "id", "output_path", "prompt" }, ...] }`.
+   b. Dispatch every entry **in parallel** — one message, one `Agent` tool call per entry, `subagent_type: researcher`, `prompt` taken verbatim from the manifest entry.
+   c. **Gate check**: after all return, confirm every entry's `output_path` exists and is non-empty. For any that don't, redispatch that single entry once (same prompt). If it's still missing/empty after the retry, proceed without it and note the failure in the resume message below — do not write the file yourself.
+   d. **Resume the director**: `SendMessage` to the director's name/id with a message naming the phase just completed, the manifest's dispatch ids, their output paths, and any that failed the gate check after retry. Tell it to continue the workflow from exactly where it left off.
+   e. The director's reply is either another `DISPATCH_REQUIRED` line (go to 3a for the new manifest) or the final Phase 9 report-back.
+
+4. **Record keeping**: nothing else to do here — the director already writes `dispatch_mode: subagent` into `plan.md`, and each manifest is overwritten per phase so `reports/<id>/dispatch-manifest.json` on disk at the end just reflects the last phase (harmless; it's inside the run dir and gets committed with everything else).
+
+After the director's Phase 9 report-back (final report path, verdict table, etc.):
 
 1. **Dashboard regeneration is optional** — the run added a report and may have appended to `tracking/`, both of which the dashboard reads, but regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy). So it is **not** run automatically — it is gated on the user's choice in Step 3. Don't run it here.
 

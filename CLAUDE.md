@@ -11,7 +11,7 @@ Four agents, three entry points. Plus four utility commands with no agent — `/
 | Command | Agent(s) | Prompt file(s) |
 |---|---|---|
 | `/scout <focus>` | scout | `.claude/agents/scout.md` |
-| `/research <question>` | research-director + researcher(s) | `.claude/agents/research-director.md`, `researcher.md` |
+| `/research <question>` | research-director (rubric) + researcher(s), dispatched by the `/research` command | `.claude/agents/research-director.md`, `researcher.md` |
 | `/podcast <run-dir>` | podcast-producer | `.claude/agents/podcast-producer.md` |
 | `/log-trade <description>` | — (Notion MCP direct) | `.claude/commands/log-trade.md` |
 | `/journal <reflection>` | — (local tracking direct) | `.claude/commands/journal.md` |
@@ -29,11 +29,13 @@ The agents' prompts are the rubrics; if output quality drifts, tighten the relev
 
 ## Research flow
 
+**Orchestration**: the `/research` command is the orchestrator — it's the top-level session, so it's the only thing that can spawn `Agent` subagents. `research-director` runs as a resumable subagent that holds the rubric (planning, critique, synthesis) but has no dispatch tool of its own: whenever it needs researchers run, it writes a dispatch manifest (`reports/<run>/dispatch-manifest.json`) and stops; the command reads it, dispatches `researcher` subagents in parallel, gate-checks their output files, and resumes the director with the results. This repeats across rounds until the director's reply is the final report-back instead of another manifest. If `Agent` is unavailable to the command, the run fails fast with a clear message — it never falls back to the director (or the command) doing research inline.
+
 1. **Intake** — director parses question + sources + effort.
-2. **Decompose** — director writes a two-layer question tree to `reports/<run>/plan.md`. Layer 1 = broad themes, Layer 2 = specific researchable items.
+2. **Decompose** — director writes a two-layer question tree to `reports/<run>/plan.md` (including `dispatch_mode: subagent` as a record of this orchestration). Layer 1 = broad themes, Layer 2 = specific researchable items.
 3. **Allocate** — director groups Layer-2 items into 3–8 bundles.
-4. **Dispatch (parallel)** — one researcher per bundle, fired in parallel.
-5. **Critique & iterate (adaptive)** — director reads all reports, writes per-report critiques to `critiques/round-N.md`, re-dispatches only those needing revision. Repeats until satisfied OR effort cap hit (`quick`=0 rounds, `low`=1, `medium`=2, `high`=4 — upper bounds; director may stop earlier). `quick` shrinks the whole pipeline, not just revisions: 2–3 bundles at survey depth, no critique files, and one combined ticker-scan researcher (`tickers/ticker-scan.md`) instead of per-ticker deep dives.
+4. **Dispatch (parallel)** — director writes a dispatch manifest; the command fires one researcher per bundle in parallel and resumes the director.
+5. **Critique & iterate (adaptive)** — director reads all reports, writes per-report critiques to `critiques/round-N.md`, writes a revision manifest for only those needing work; the command dispatches revisions and resumes the director. Repeats until satisfied OR effort cap hit (`quick`=0 rounds, `low`=1, `medium`=2, `high`=4 — upper bounds; director may stop earlier). `quick` shrinks the whole pipeline, not just revisions: 2–3 bundles at survey depth, no critique files, and one combined ticker-scan researcher (`tickers/ticker-scan.md`) instead of per-ticker deep dives.
 6. **Synthesize** — director writes `final-report.md` as a graph: connections, contradictions, cascades, emergent picture. Tickers section included only if the question implies investable output.
 7. **Commit** — `/research` commits the run on its own `research/<slug>` branch and opens a PR.
 
@@ -143,6 +145,7 @@ scouts/                        # only if /scout was run
 reports/
   YYYY-MM-DD-<slug>/
     plan.md
+    dispatch-manifest.json     # transient — director's current-phase dispatch list for the command to execute; overwritten per phase, harmless left on disk
     individual/
       01-<topic-slug>.md
       02-<topic-slug>.md
