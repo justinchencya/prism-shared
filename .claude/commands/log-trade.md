@@ -175,9 +175,10 @@ The Investment Log identifiers are read from the environment so the engine carri
 
 10. **Commit & PR** — the work is already on the `log-trade/<date>-<slug>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/trades.json`, plus `tracking/positions-thesis.json` and/or `tracking/candidates.json` if Step 7 moved a thesis). Note that `dashboard/index.html` is included only if the user opts to regenerate it.
 
-    Ask for permission using `AskUserQuestion` with three questions:
+    Ask for permission using a single `AskUserQuestion` call with four questions:
     - "Commit and push this trade log?" (Yes / No)
     - "Open a pull request on GitHub?" (Yes / No)
+    - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
     - "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
 
     Wait for the answers. **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` from the repo root now, before staging. Report success or any error output. **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D log-trade/<date>-<slug>` (the tracking edits remain in the working tree; the Notion row written in Step 5 stays — only the branch is discarded). Report and stop.
@@ -195,7 +196,7 @@ The Investment Log identifiers are read from the environment so the engine carri
     gh pr create --base main --head log-trade/<date>-<slug> --title "log-trade: <ticker> <action> <date>" --body "<one line: ticker, action, amount, linked runs>"
     ```
 
-    After the PR is open, **ask the user** via `AskUserQuestion`: "Merge this PR now?" (Yes / No). If yes, run `gh pr merge --squash --delete-branch`; if no, leave it open. Either way, finish on `main`:
+    No second prompt — if the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way, finish on `main`:
     ```bash
     git switch main
     ```

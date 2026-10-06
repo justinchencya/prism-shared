@@ -42,9 +42,10 @@ After the producer reports `episode.mp3` is written, commit the podcast and open
 
 1. **Show the user** the files that would be committed (`episode.mp3`, `episode.json`, `script.md`, `outline.md` under `reports/<run-dir>/podcast/`), using `git status --short` or a plain file listing.
 
-2. **Ask for permission** using `AskUserQuestion` with two questions:
+2. **Ask for permission** using a single `AskUserQuestion` call with three questions:
    - "Commit and push this podcast episode?" (Yes / No)
    - "Open a pull request on GitHub?" (Yes / No)
+   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
 
    Wait for the user's answers. **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D podcast/<run-dir-basename>`. Report and stop.
 
@@ -63,7 +64,7 @@ git push -u origin podcast/<run-dir-basename>
 gh pr create --base main --head podcast/<run-dir-basename> --title "podcast: <slug>" --body "<one-line>"
 ```
 
-5. After the PR is open, **ask the user** via `AskUserQuestion`: "Merge this PR now?" (Yes / No). If yes, run `gh pr merge --squash --delete-branch`. If no, leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
+5. No second prompt — if the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
 
 ```bash
 git switch main

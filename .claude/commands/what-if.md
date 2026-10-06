@@ -53,9 +53,10 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    - If it prints warnings (e.g. `no price history` — likely a bad or delisted ticker), surface them and ask whether to fix the scenario (edit the JSON and re-preview) or abandon (take the decline path in step 6).
    - If the count of active scenarios is now above 4, note that the chart palette has 4 slots so colors will repeat, and suggest archiving an old scenario.
 
-6. **Commit & PR** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Ask via `AskUserQuestion` with three questions:
+6. **Commit & PR** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Ask via a single `AskUserQuestion` call with four questions:
    - "Commit and push this what-if scenario?" (Yes / No)
    - "Open a pull request on GitHub?" (Yes / No)
+   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
    - "Regenerate the dashboard? (fetches live prices — slow on a cold cache)" (Yes / No)
 
    **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` now, before staging (the scenario renders as a dashed overlay line on the P&L chart). **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D whatif/<YYYY-MM-DD>-<NNN>` (the edit stays in the working tree; nothing was pushed). Report and stop.
@@ -70,7 +71,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    ```bash
    gh pr create --base main --head whatif/<YYYY-MM-DD>-<NNN> --title "whatif: <name or action>" --body "<one line: what the scenario simulates, or what changed>"
    ```
-   After the PR is open, ask via `AskUserQuestion`: "Merge this PR now?" (Yes / No). If yes, `gh pr merge --squash --delete-branch`; if no, leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
+   No second prompt — if the user approved the PR **and** the merge, `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
 
 7. **Report back** — the scenario `id` and name (or the management action), the preview numbers, the PR URL if opened, and a reminder that the scenario appears on the dashboard P&L chart after the next regeneration if they skipped it.
 

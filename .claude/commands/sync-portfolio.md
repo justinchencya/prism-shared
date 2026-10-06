@@ -57,9 +57,10 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 
    In review-only mode this step runs against the committed snapshot and the reconciliation findings from Step 4's logic are **reported only** (no numbered apply-prompt, no writes) — end with a note that fixes require a sync-mode run.
 
-6. **Commit & PR** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json`, plus any tracking files changed in Step 4. Ask via `AskUserQuestion`:
+6. **Commit & PR** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json`, plus any tracking files changed in Step 4. Ask via a single `AskUserQuestion` call:
    - "Commit and push this portfolio sync?" (Yes / No)
    - "Open a pull request on GitHub?" (Yes / No)
+   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
    - Only if Step 4 changed `positions-thesis.json` or `candidates.json` (dashboard inputs): "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
 
    If regen approved: run `python3 scripts/generate_dashboard.py` now and stage `dashboard/index.html` with the run. **Decline path**: `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise:
@@ -72,7 +73,7 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
    ```bash
    gh pr create --base main --head sync-portfolio/<id> --title "sync-portfolio: <YYYY-MM-DD>" --body "<one line: N accounts, M positions, fixes applied if any>"
    ```
-   After the PR is open, ask via `AskUserQuestion`: "Merge this PR now?" (Yes / No). Yes → `gh pr merge --squash --delete-branch`; no → leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
+   No second prompt — PR and merge both approved → `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
 
 7. **Report back** — mode used, snapshot age, accounts/positions synced, fixes applied (or "reported only"), unlogged trades suggested for `/log-trade`, and the PR URL if opened.
 
