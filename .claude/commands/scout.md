@@ -34,11 +34,12 @@ If the agent reports that all sources came back empty (e.g. GDELT fully rate-lim
 
 The scout run is a self-contained artifact. To commit it:
 
-1. **Show the user** the file that would be committed (`scouts/<timestamp>/brief.md` and supporting files).
+1. **Show the results first, then the files** — before any prompt, output as plain text the path to `brief.md` and the agent's terse ranked candidate list (with the `/research "<question>"` reminder below), so the user can read it while answering. Then show the file that would be committed (`scouts/<timestamp>/brief.md` and supporting files).
 
-2. **Ask for permission** using `AskUserQuestion` with two questions:
+2. **Ask for permission** using a single `AskUserQuestion` call with three questions:
    - "Commit and push the scout brief?" (Yes / No)
    - "Open a pull request on GitHub?" (Yes / No)
+   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
 
    Wait for the user's answers. **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D scout/<timestamp>`. Report and stop.
 
@@ -57,7 +58,7 @@ git push -u origin scout/<timestamp>
 gh pr create --base main --head scout/<timestamp> --title "scout: brief <timestamp>" --body "<one-line: focus + candidate count>"
 ```
 
-5. After the PR is open, **ask the user** via `AskUserQuestion`: "Merge this PR now?" (Yes / No). If yes, run `gh pr merge --squash --delete-branch`. If no, leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
+5. No second prompt — if the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
 
 ```bash
 git switch main
@@ -65,7 +66,7 @@ git switch main
 
 The remote is named `origin`. The clean-tree guard already ran before branching; by commit time the only uncommitted content is this run's own `scouts/<timestamp>/` files. If any git/`gh` step fails, report the error and stop — don't retry destructively.
 
-Report back briefly: the path to `brief.md`, the PR URL (if opened), and the terse ranked candidate list. Remind the user that to pursue a candidate they run `/research "<the suggested question from the brief>"` — the scout does not start research itself.
+Report back briefly: the PR URL (if opened) and merge outcome — the brief path and ranked candidate list were already shown in Step 1. Remind the user that to pursue a candidate they run `/research "<the suggested question from the brief>"` — the scout does not start research itself.
 
 ## Examples
 

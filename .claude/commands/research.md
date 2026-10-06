@@ -54,13 +54,16 @@ The `research-director` agent runs as a subagent and the harness disables nested
 
 After the director's Phase 9 report-back (final report path, verdict table, etc.):
 
+0. **Show results first** — before any git step or prompt, output as plain text: the final report path (`reports/<id>/final-report.md`) and, if the director's reply included a **verdict table** (investable runs), that table verbatim. Do not paste any other report contents. This must be emitted *before* the `AskUserQuestion` call in Step 3 so the user can read the verdicts while answering. Do not repeat the table in the closing message.
+
 1. **Dashboard regeneration is optional** — the run added a report and may have appended to `tracking/`, both of which the dashboard reads, but regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy). So it is **not** run automatically — it is gated on the user's choice in Step 3. Don't run it here.
 
 2. **Show the user** the list of files that would be committed (`reports/<id>/` and any changed `tracking/` files), using `git status --short` or a plain file listing. Note that `dashboard/index.html` is included only if the user opts to regenerate it (Step 3).
 
-3. **Ask for permission** using `AskUserQuestion` with three questions:
+3. **Ask for permission** using a single `AskUserQuestion` call with four questions:
    - "Commit and push these changes?" (Yes / No)
    - "Open a pull request on GitHub?" (Yes / No)
+   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
    - "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
 
    Wait for the user's answers. **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` from the repo root now, before staging. Report any error output but don't block the commit on it. **If the user declines the commit**, return to `main` and drop the unused branch: `git switch main && git branch -D research/<id>` (the run's files remain in the working tree; nothing was pushed). Report and stop.
@@ -82,7 +85,7 @@ git push -u origin research/<id>
 gh pr create --base main --head research/<id> --title "research: <slug>" --body "<one-line: the question + effort>"
 ```
 
-6. After the PR is open, **ask the user** via `AskUserQuestion`: "Merge this PR now?" (Yes / No). If yes, run `gh pr merge --squash --delete-branch`. If no, leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
+6. No second prompt — use the merge answer from Step 3. If the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise (no PR, or merge declined) leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
 
 ```bash
 git switch main
@@ -90,7 +93,7 @@ git switch main
 
 The remote is named `origin`; the branch `research/<id>` matches its run dir (e.g. `research/2026-05-28-edge-computing-agentic-ai`). The clean-tree guard already ran before branching; by commit time the uncommitted changes are this run's own files plus — only if the user opted to regenerate — `dashboard/index.html` (tracked, committed with the run). If any git/`gh` step fails, report the error and stop — don't retry destructively.
 
-If the director's reply included a **verdict table** (investable runs), relay it to the user verbatim in your final message alongside the report path and PR URL — it's the at-a-glance digest the user always wants. Do not paste any other report contents.
+The final message carries only the PR URL and merge outcome — the report path and verdict table were already shown in Step 0.
 
 ## Examples
 
