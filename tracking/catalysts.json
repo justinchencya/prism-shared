@@ -1,4 +1,47 @@
 {
-  "last_updated": "2026-06-24",
-  "entries": []
+  "last_updated": "2026-10-07",
+  "entries": [
+    {
+      "id": "US-MIDTERMS-2026-ELECTION",
+      "type": "event_monitor",
+      "title": "2026 US midterm elections",
+      "expected_window": "2026-11-03",
+      "status": "active",
+      "tickers_affected": [],
+      "added": "2026-10-07",
+      "description": "Prediction markets: House flips D ~84-85%, Senate R hold ~51-53%, D sweep ~48-49%. Historical 12-month post-midterm S&P returns positive in all cases since 1950s; macro (Fed hikes, yields) is the key confounder.",
+      "history": [
+        {
+          "event": "created",
+          "from_verdict": null,
+          "to_verdict": null,
+          "run": "2026-10-07-midterm-election-market-patterns",
+          "date": "2026-10-07",
+          "source_file": "reports/2026-10-07-midterm-election-market-patterns/final-report.md",
+          "note": "Created from non-investable run"
+        }
+      ]
+    },
+    {
+      "id": "FED-RATE-2026-WARSH-HIKES",
+      "type": "event_monitor",
+      "title": "Fed follow-up hikes after Sep 17 2026 hike",
+      "expected_window": "Oct-Dec 2026 FOMC meetings",
+      "status": "active",
+      "tickers_affected": [],
+      "added": "2026-10-07",
+      "description": "Funds rate 3.75-4.00%; ~38% odds of another hike by year-end (CommBank, Sep 2026). Main macro confounder for the midterm seasonal.",
+      "history": [
+        {
+          "event": "created",
+          "from_verdict": null,
+          "to_verdict": null,
+          "run": "2026-10-07-midterm-election-market-patterns",
+          "date": "2026-10-07",
+          "source_file": "reports/2026-10-07-midterm-election-market-patterns/final-report.md",
+          "note": "Created from non-investable run"
+        }
+      ]
+    }
+  ]
 }
