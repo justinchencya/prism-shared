@@ -42,6 +42,52 @@
           "note": "Created from non-investable run"
         }
       ]
+    },
+    {
+      "id": "MOS-SULFUR-HORMUZ-2027",
+      "type": "event_monitor",
+      "title": "Sulfur/ammonia normalization (Hormuz, China acid export ban)",
+      "expected_window": "2026-Q4 to 2027",
+      "status": "active",
+      "tickers_affected": [
+        "MOS"
+      ],
+      "added": "2026-10-07",
+      "description": "Phosphate margins at Mosaic hinge on sulfur/ammonia easing; Q3 sulfur contracted ~$705/LT, below spot. Watch Q4-26/Q1-27 phosphate stripping margin.",
+      "history": [
+        {
+          "event": "created",
+          "from_verdict": null,
+          "to_verdict": null,
+          "run": "2026-10-07-mos-mosaic-quick-scan",
+          "date": "2026-10-07",
+          "source_file": "reports/2026-10-07-mos-mosaic-quick-scan/final-report.md",
+          "note": "Created from MOS quick scan"
+        }
+      ]
+    },
+    {
+      "id": "POTASH-JANSEN-2027",
+      "type": "event_monitor",
+      "title": "BHP Jansen Stage 1 first production and potash price response",
+      "expected_window": "mid-2027 onward",
+      "status": "active",
+      "tickers_affected": [
+        "MOS"
+      ],
+      "added": "2026-10-07",
+      "description": "Stage 1 ~4.2 Mtpa (~5% of supply) from mid-CY27; Stage 2 slipped to FY31. Potash below ~$250/t mine-gate would break the MOS hypothesis.",
+      "history": [
+        {
+          "event": "created",
+          "from_verdict": null,
+          "to_verdict": null,
+          "run": "2026-10-07-mos-mosaic-quick-scan",
+          "date": "2026-10-07",
+          "source_file": "reports/2026-10-07-mos-mosaic-quick-scan/final-report.md",
+          "note": "Created from MOS quick scan"
+        }
+      ]
     }
   ]
 }
