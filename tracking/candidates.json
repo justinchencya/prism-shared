@@ -1,19 +1,4 @@
 {
-  "last_updated": "2026-10-07",
-  "entries": [
-    {
-      "ticker": "MOS",
-      "added_date": "2026-10-07",
-      "reports": [
-        {
-          "run": "2026-10-07-mos-mosaic-quick-scan",
-          "date": "2026-10-07",
-          "hypothesis": "Firm potash plus a phosphate margin recovery plus Brazil/asset-sale deleveraging produce multi-year returns, without a leverage or dilution event.",
-          "entry_condition": "Start or add in tranches once Q4-26/Q1-27 phosphate stripping margin turns positive as sulfur/ammonia roll over, or net debt/EBITDA falls toward ~2.5x after the Q4 working-capital release; a small starter near the ~$19.7 52-week low only with sizing that tolerates dividend-cut risk.",
-          "verdict": "Thesis: Inconclusive / Market: Hold"
-        }
-      ],
-      "events": []
-    }
-  ]
+  "last_updated": "2026-06-24",
+  "entries": []
 }
