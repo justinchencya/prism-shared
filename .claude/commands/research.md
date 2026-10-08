@@ -54,7 +54,7 @@ The `research-director` agent runs as a subagent and the harness disables nested
 
 After the director's Phase 9 report-back (final report path, verdict table, etc.):
 
-0. **Show results first** — before any git step or prompt, output as plain text: the final report path (`reports/<id>/final-report.md`) and, if the director's reply included a **verdict table** (investable runs), that table verbatim. Do not paste any other report contents. This must be emitted *before* the `AskUserQuestion` call in Step 3 so the user can read the verdicts while answering. Do not repeat the table in the closing message.
+0. **Show results first** — before any git step or prompt, output as plain text: the final report path (`reports/<id>/final-report.md`) and, if the director's reply included a **verdict table** (investable runs), that table verbatim. Do not paste any other report contents. Text emitted mid-turn between tool calls is not reliably visible to the user, so this alone is not enough — the table is also carried *inside* the Step 3 prompt (as the option preview) and repeated in the final message.
 
 1. **Dashboard regeneration is optional** — the run added a report and may have appended to `tracking/`, both of which the dashboard reads, but regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy). So it is **not** run automatically — it is gated on the user's choice in Step 3. Don't run it here.
 
@@ -65,6 +65,8 @@ After the director's Phase 9 report-back (final report path, verdict table, etc.
    - "Open a pull request on GitHub?" (Yes / No)
    - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
    - "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
+
+   **Put the results in the prompt itself**: on the first question ("Commit and push these changes?"), set the `preview` field of **both** options to the report path followed by the verdict table verbatim (or, for non-investable runs, the report path plus the final report's executive answer). The preview renders beside the options while the user answers — this is what guarantees the verdicts are visible at decision time.
 
    Wait for the user's answers. **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` from the repo root now, before staging. Report any error output but don't block the commit on it. **If the user declines the commit**, return to `main` and drop the unused branch: `git switch main && git branch -D research/<id>` (the run's files remain in the working tree; nothing was pushed). Report and stop.
 
@@ -93,7 +95,7 @@ git switch main
 
 The remote is named `origin`; the branch `research/<id>` matches its run dir (e.g. `research/2026-05-28-edge-computing-agentic-ai`). The clean-tree guard already ran before branching; by commit time the uncommitted changes are this run's own files plus — only if the user opted to regenerate — `dashboard/index.html` (tracked, committed with the run). If any git/`gh` step fails, report the error and stop — don't retry destructively.
 
-The final message carries only the PR URL and merge outcome — the report path and verdict table were already shown in Step 0.
+**Final message (always, including the decline path)**: the report path, the **verdict table verbatim** (investable runs — it's the at-a-glance digest the user always wants), the PR URL if opened, and the merge outcome. Repeat the table here even though Step 0 and the Step 3 preview already showed it — the final message is the only output guaranteed to stay visible. Do not paste any other report contents.
 
 ## Examples
 
