@@ -16,6 +16,7 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 1. **Detect mode** — check for the credentials *without* printing them: look for non-empty `SNAPTRADE_CLIENT_ID` and `SNAPTRADE_CONSUMER_KEY` in the environment, else as assignments in `<repo-root>/.env` (e.g. `grep -c '^SNAPTRADE_CLIENT_ID=..*' .env`). Never echo, cat, or log the key values. Both present → sync mode (continue with Step 2). Either missing → review-only mode (skip to Step 5, prefixing the review with the staleness warning).
 
 2. **Sync with main and cut the branch** — per the **Git convention** in `CLAUDE.md`, before any work:
+   - **Engine-repo guard**: if `.prism-engine` exists at the repo root, stop — this is the public engine repo; tell the user to run `/sync-portfolio` in their private daily-driver repo.
    - **Clean-tree guard**: `git status --porcelain` — any unrelated changes → stop and report; never stash or sweep them in.
    - `git switch main && git pull --ff-only origin main`. On failure: report and stop.
    - Compute the identifier and cut the branch:

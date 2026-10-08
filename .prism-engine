@@ -1,0 +1,6 @@
+This file marks the public engine repo (prism-shared). Commands that write
+personal data (/research, /scout, /podcast, /log-trade, /journal, /what-if,
+/sync-portfolio) refuse to run while it exists — run them in your private
+daily-driver repo instead. /sync never copies it there.
+
+Running Prism from a single repo? Delete this file.

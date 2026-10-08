@@ -100,6 +100,7 @@ Canonical procedure (each command substitutes branch / paths / title):
 
 ```bash
 # ── at the start, before any work ──
+test -e .prism-engine && echo "engine repo"          # engine-repo guard: marker present → stop & report
 git status --porcelain                               # clean-tree guard: unrelated changes → stop & report
 git switch main && git pull --ff-only origin main    # the ONE sync
 git switch -c <type>/<identifier>                     # branch off fresh main, BEFORE the work
@@ -114,6 +115,7 @@ gh pr merge --squash --delete-branch
 git switch main                                       # always finish on main
 ```
 
+- **Engine-repo guard** — `.prism-engine` at the repo root marks the public engine repo (prism-shared); every command except `/sync` stops there and points the user to their private repo. Single-repo setups delete the marker.
 - **Clean-tree guard** — before pulling/branching, if `git status --porcelain` shows changes unrelated to this run, stop and report; never stash or sweep them in.
 - **Decline path** — if the user says no at *commit & push?*, return to `main` and drop the unused local branch: `git switch main && git branch -D <type>/<identifier>` (the work returns to the working tree; nothing was pushed). For `/log-trade` and `/journal`, any Notion write and tracking-file edits already made remain — only the branch is discarded.
 - **Failure rule** — any git/`gh` failure: report and stop, no destructive retry.
@@ -129,7 +131,7 @@ Prism lives in two sibling repos:
 **Rules:**
 
 - Engine changes belong in **prism-shared first**, then sync to prism. When a change lands in prism first (it happens — that's where daily work runs), port it back to prism-shared promptly.
-- Engine files should be **byte-identical** across the two repos. The only expected diffs are personal data: `tracking/*.json`, `dashboard/index.html`, `.claude/scout-x-feeds.json`, `.claude/settings.local.json`, `.claude/podcast-cast.json`, `.env`, `reports/`, `scouts/`, `memos/`.
+- Engine files should be **byte-identical** across the two repos. The only expected diffs are the `.prism-engine` marker (prism-shared only) and personal data: `tracking/*.json`, `dashboard/index.html`, `.claude/scout-x-feeds.json`, `.claude/settings.local.json`, `.claude/podcast-cast.json`, `.env`, `reports/`, `scouts/`, `memos/`.
 - **Nothing personal ever enters prism-shared** — no real handles, Notion IDs, keys, personal paths, or tracking data. prism → prism-shared is a port with sanitization, not a copy.
 - Sync commits reference the source repo's PR (`sync: <what> from prism (#N)`), so direction and provenance are recoverable from history.
 - `/sync` (`.claude/commands/sync.md`) automates the whole flow: diffs the engine set, infers direction from git history, sanitizes, and lands a PR in the receiving repo per the Git convention.

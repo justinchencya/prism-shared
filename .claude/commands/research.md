@@ -21,6 +21,7 @@ If no `effort:` flag was supplied, use `AskUserQuestion` to ask which level the 
 
 ```bash
 cd <repo-root>
+test -e .prism-engine && echo "engine repo"                 # marker present → stop: run this in the private repo
 git status --porcelain                               # unrelated changes → stop & report
 git switch main && git pull --ff-only origin main
 git switch -c research/<id>

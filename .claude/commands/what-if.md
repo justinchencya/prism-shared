@@ -11,6 +11,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
 ## Steps
 
 1. **Sync with main and resolve today's date** — do this before anything else:
+   - **Engine-repo guard**: if `.prism-engine` exists at the repo root, stop — this is the public engine repo; tell the user to run `/what-if` in their private daily-driver repo.
    - **Clean-tree guard**: run `git status --porcelain`. If it shows any changes, stop and report; never stash or sweep them in.
    - Run `git switch main && git pull --ff-only origin main`. On any failure, report and stop — never stash, reset, or force.
    - **Resolve today's date from the system clock** (`date +%Y-%m-%d`) — never rely on a date carried in context. Use it everywhere below (entry `id`, `created`, branch name, `last_updated`).

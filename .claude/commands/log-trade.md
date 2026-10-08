@@ -28,6 +28,7 @@ The Investment Log identifiers are read from the environment so the engine carri
 ## Steps
 
 1. **Sync with main and resolve today's date** — do this before anything else:
+   - **Engine-repo guard**: if `.prism-engine` exists at the repo root, stop — this is the public engine repo; tell the user to run `/log-trade` in their private daily-driver repo.
    - Run a clean-tree guard: `git status --porcelain` — if it shows changes unrelated to this run, stop and report; never stash or sweep them in.
    - Run `git switch main && git pull --ff-only origin main` so the tracking files (`tracking/*.json`) and `reports/` reflect the latest merged research runs. If the switch or pull fails (uncommitted changes in the way, network error, non-fast-forward), report the error and stop — never stash, reset, or force anything.
    - **Resolve today's date from the system clock** by running `date +%Y-%m-%d` — never rely on a date carried in context, which may be stale. Use this value as "today" everywhere below (the `date` field default, `linked_at`, the trade `id` date segment, and `last_updated`).
