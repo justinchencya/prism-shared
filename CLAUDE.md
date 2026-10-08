@@ -100,7 +100,7 @@ Canonical procedure (each command substitutes branch / paths / title):
 
 ```bash
 # ── at the start, before any work ──
-test -e .prism-engine && echo "engine repo"          # engine-repo guard: marker present → stop & report
+test ! -e .prism-engine || { echo "engine repo — run this in your private repo"; exit 1; }   # engine-repo guard
 git status --porcelain                               # clean-tree guard: unrelated changes → stop & report
 git switch main && git pull --ff-only origin main    # the ONE sync
 git switch -c <type>/<identifier>                     # branch off fresh main, BEFORE the work

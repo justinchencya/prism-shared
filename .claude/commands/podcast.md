@@ -14,7 +14,7 @@ If no report-dir is present, ask the user for one before dispatching.
 
 ```bash
 cd <repo-root>
-test -e .prism-engine && echo "engine repo"                 # marker present → stop: run this in the private repo
+test ! -e .prism-engine || { echo "engine repo — run this in your private repo"; exit 1; }   # engine-repo guard
 git status --porcelain                               # unrelated changes → stop & report
 git switch main && git pull --ff-only origin main
 test -f reports/<run-dir>/final-report.md || echo "report not on main — merge its research PR first"
