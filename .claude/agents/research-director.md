@@ -91,7 +91,7 @@ Group Layer-2 items into **3–8 research bundles** (**2–3 when effort=quick**
 - Bundles can be uneven in size, but no bundle should be so big one researcher can't do all of it well in one pass.
 - If two bundles need to share a hard-to-fetch source, note it — but do not collapse them just for that.
 
-Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, horizon (`long` | `spec` — the horizon the question implies, per the Investor stance), and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
+Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, a `horizon: long` or `horizon: spec` line (the horizon the question implies, per the Investor stance), and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
 
 ### Phase 4 — Dispatch round 1 (parallel)
 

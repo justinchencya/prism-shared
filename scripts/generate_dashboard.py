@@ -115,6 +115,28 @@ def build_horizon_lookup(theses: dict, candidates: dict) -> dict:
             for r in entry.get("reports", []) if r.get("run")}
 
 
+def build_run_horizons(runs: list, theses: dict, candidates: dict) -> dict:
+    """{run slug: horizon}. The run's plan.md `horizon:` line wins; runs that
+    predate it fall back to the horizon stamped on their tracking entries, then
+    to "long" (every earlier run was judged on the long-term stance)."""
+    stamped = {}
+    for entry in {**theses, **candidates}.values():
+        for r in entry.get("reports", []):
+            if r.get("run") and r.get("horizon") in HORIZONS:
+                stamped.setdefault(r["run"], r["horizon"])
+    result = {}
+    for run in runs:
+        plan = REPORTS_DIR / run["slug"] / "plan.md"
+        m = re.search(r"^\W*horizon\W*:\W*(long|spec)\b", plan.read_text(), re.I | re.M) if plan.exists() else None
+        result[run["slug"]] = m.group(1).lower() if m else stamped.get(run["slug"], "long")
+    return result
+
+
+def _link_horizon(horizon_lookup: dict | None, run_horizons: dict | None, ticker: str, run: str | None):
+    """A linked run's horizon: the ticker-level entry if one exists, else the run's own."""
+    return (horizon_lookup or {}).get((ticker, run)) or (run_horizons or {}).get(run)
+
+
 def build_verdict_lookup(theses: dict, candidates: dict) -> dict:
     """Build {(ticker, run): verdict} from thesis and candidates reports[]."""
     lookup = {}
@@ -269,12 +291,14 @@ def fetch_price_history(tickers: set, start_date: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def build_timeline(runs: list, trades: list, journal: list | None = None, verdict_lookup: dict | None = None,
-                   horizon_lookup: dict | None = None) -> list:
+                   horizon_lookup: dict | None = None, run_horizons: dict | None = None) -> list:
+    run_horizons = run_horizons or {}
     events = []
     for r in runs:
-        events.append({"type": "research", **r})
+        events.append({"type": "research", **r, "horizon": run_horizons.get(r["slug"])})
     for j in (journal or []):
-        events.append({"type": "journal", **j})
+        links = [{**l, "horizon": run_horizons.get(l.get("run"))} for l in j.get("linked_research", [])]
+        events.append({"type": "journal", **j, "linked_research": links})
     for t in trades:
         ticker = t["ticker"]
         enriched_links = []
@@ -282,7 +306,7 @@ def build_timeline(runs: list, trades: list, journal: list | None = None, verdic
             verdict = link.get("market_verdict")
             if verdict is None and verdict_lookup:
                 verdict = verdict_lookup.get((ticker, link.get("run")))
-            horizon = (horizon_lookup or {}).get((ticker, link.get("run")))
+            horizon = _link_horizon(horizon_lookup, run_horizons, ticker, link.get("run"))
             enriched_links.append({**link, "market_verdict": verdict, "horizon": horizon})
         events.append({"type": "trade", **t, "linked_research": enriched_links})
     events.sort(key=lambda e: e["date"])
@@ -311,7 +335,7 @@ def _days_lag(trade_date: str, research_date: str) -> int | None:
 
 
 def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: dict | None = None,
-                    horizon_lookup: dict | None = None) -> list:
+                    horizon_lookup: dict | None = None, run_horizons: dict | None = None) -> list:
     prices = prices or {}
     rows = []
     for trade in trades:
@@ -351,7 +375,7 @@ def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: di
                     "run": link.get("run"),
                     "date": link.get("date"),
                     "verdict": verdict,
-                    "horizon": (horizon_lookup or {}).get((ticker, link.get("run"))),
+                    "horizon": _link_horizon(horizon_lookup, run_horizons, ticker, link.get("run")),
                     "alignment": _alignment(trade["action"], verdict),
                     "days_lag": _days_lag(trade["date"], link.get("date", "")),
                 })
@@ -676,7 +700,8 @@ def build_per_ticker(
         ticker_trades = [t for t in trades if t["ticker"] == ticker]
         holding = theses.get(ticker) or candidates.get(ticker) or {}
         research_history = holding.get("reports", [])
-        events = holding.get("events", [])[:3]
+        events = sorted((e for e in holding.get("events", []) if e.get("status", "active") == "active"),
+                        key=lambda e: e.get("added", ""), reverse=True)
 
         # P&L calculation
         pnl_pct = None
@@ -748,7 +773,9 @@ h3 { font-size: 14px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; }
 .badge.trim { background: #3b2800; color: #fb923c; }
 .badge.add { background: #064e3b; color: #34d399; }
 .badge.research { background: #1e3a5f; color: #60a5fa; }
-.badge.spec { background: #3b2800; color: #fbbf24; }
+.badge.hz { font-size: 10px; text-transform: none; margin-left: 4px; }
+.badge.hz-long { background: #1e293b; color: #94a3b8; }
+.badge.hz-spec { background: #3b2800; color: #fbbf24; }
 .badge.journal { background: #2e1065; color: #c4b5fd; }
 .badge.ticker { background: #1e293b; color: #94a3b8; }
 .badge.investable { background: #312e81; color: #a5b4fc; }
@@ -1110,9 +1137,9 @@ function sortTable(col) {
   renderAlignmentRows(rows);
 }
 
-// Long is the norm; only flag the speculative sleeve.
-function specTag(h) {
-  return h === 'spec' ? ' <span class="badge spec" style="font-size:10px">spec</span>' : '';
+// Horizon chip next to any research run or verdict: long (muted) / spec (amber).
+function horizonTag(h) {
+  return h ? `<span class="badge hz hz-${h}" title="horizon">${h}</span>` : '';
 }
 
 function renderAlignmentRows(rows) {
@@ -1124,7 +1151,7 @@ function renderAlignmentRows(rows) {
           const slug = l.run ? l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '') : '?';
           const lag = l.days_lag != null ? ` <span style="color:#64748b">${l.days_lag}d</span>` : '';
           const verdict = l.verdict ? ` <span class="badge ${l.verdict.toLowerCase()}" style="font-size:10px">${l.verdict}</span>` : '';
-          return `<div style="white-space:nowrap" title="${l.run||''}">${slug}${verdict}${specTag(l.horizon)}${lag}</div>`;
+          return `<div style="white-space:nowrap" title="${l.run||''}">${slug}${verdict}${horizonTag(l.horizon)}${lag}</div>`;
         }).join('');
     let pnlHtml = '—';
     if (r.pnl_pct != null) {
@@ -1156,12 +1183,12 @@ function renderTimeline() {
         <div class="tl-card">
           <div class="date">${e.date} &mdash; research</div>
           <div class="title">${e.question}</div>
-          <div class="meta"><span class="badge research">${e.slug.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${inv}</div>
+          <div class="meta"><span class="badge research">${e.slug.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${horizonTag(e.horizon)}${inv}</div>
         </div></div>`;
     } else if (e.type === 'journal') {
       const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const runBadges = (e.linked_research||[]).map(l =>
-        `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>`).join(' ');
+        `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${horizonTag(l.horizon)}`).join(' ');
       const tickerBadges = (e.linked_tickers||[]).map(t =>
         `<span class="badge ticker">${t}</span>`).join(' ');
       const links = (runBadges || tickerBadges)
@@ -1177,7 +1204,7 @@ function renderTimeline() {
       const links = (e.linked_research||[]).map(l => {
         const v = l.market_verdict;
         const vBadge = v ? ` <span class="badge ${v.toLowerCase()}" style="font-size:10px">${v}</span>` : ' <span style="color:#64748b;font-size:10px">?</span>';
-        return `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${vBadge}${specTag(l.horizon)}`;
+        return `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${vBadge}${horizonTag(l.horizon)}`;
       }).join(' ');
       const price = e.price_per_share ? ` @ $${e.price_per_share}` : '';
       return `<div class="tl-item trade"><div class="tl-dot"></div>
@@ -1206,10 +1233,10 @@ function renderTicker(ticker) {
 
   const researchHtml = d.research_history.map(r =>
     `<tr><td>${r.date}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.run}">${r.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</td>
-     <td><span class="badge ${(r.verdict||'').toLowerCase()}">${r.verdict||'—'}</span>${specTag(r.horizon)}</td></tr>`).join('');
+     <td><span class="badge ${(r.verdict||'').toLowerCase()}">${r.verdict||'—'}</span>${horizonTag(r.horizon)}</td></tr>`).join('');
 
   const eventsHtml = d.events.map(ev =>
-    `<div class="event-item"><div class="event-type">${ev.type||''}${specTag(ev.horizon)}</div><div>${ev.condition||''}</div></div>`).join('') || '<div style="color:#64748b;font-size:12px">No active events</div>';
+    `<div class="event-item"><div class="event-type">${ev.type||''}${horizonTag(ev.horizon)}</div><div>${ev.condition||''}</div></div>`).join('') || '<div style="color:#64748b;font-size:12px">No active events</div>';
 
   document.getElementById('ticker-panel').innerHTML = `
     <div class="ticker-panel">
@@ -1491,8 +1518,9 @@ def main():
 
     verdict_lookup = build_verdict_lookup(theses, candidates)
     horizon_lookup = build_horizon_lookup(theses, candidates)
-    timeline = build_timeline(runs, trades, journal, verdict_lookup, horizon_lookup)
-    alignment = build_alignment(trades, verdict_lookup, prices, horizon_lookup)
+    run_horizons = build_run_horizons(runs, theses, candidates)
+    timeline = build_timeline(runs, trades, journal, verdict_lookup, horizon_lookup, run_horizons)
+    alignment = build_alignment(trades, verdict_lookup, prices, horizon_lookup, run_horizons)
     per_ticker = build_per_ticker(theses, candidates, trades, prices)
     pnl_drivers = build_pnl_drivers(trades, prices, alignment)
 

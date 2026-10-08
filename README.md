@@ -151,7 +151,9 @@ Generates a local HTML dashboard from the tracking files. No server required —
 - **Timeline** — chronological interleaving of research runs, trades, and journal reflections, showing which research preceded which trade and what you were thinking along the way.
 - **Research → Trade Alignment** — every trade row linked to the research that drove it (from `trades.json`), with alignment classification (aligned / misaligned / unlinked) and lag in days between research and trade.
 - **P&L** — portfolio value vs. net invested over time, per-ticker P&L drivers, and dashed overlay lines for any active `/what-if` scenarios with per-scenario summaries.
-- **Per-Ticker Drilldown** — full research history for a ticker (all runs that covered it, with thesis evolution and verdicts), trade history with shares and price, unrealized P&L vs. current price, and active falsifiers / event monitors.
+- **Per-Ticker Drilldown** — full research history for a ticker (all runs that covered it, with thesis evolution and verdicts), trade history with shares and price, unrealized P&L vs. current price, and all active buy triggers / falsifiers / event monitors, newest first.
+
+Every research run and verdict, in every view, carries a horizon chip — `long` or `spec` — so long-term and speculative calls stay distinguishable.
 
 **Requirements:** `yfinance` (for current prices and P&L). Install via `pip install yfinance` or run `bash setup.sh`.
 
