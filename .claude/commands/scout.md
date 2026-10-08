@@ -15,6 +15,7 @@ Everything the user typed after `/scout` is the **focus** — the direction for 
 
 ```bash
 cd <repo-root>
+test ! -e .prism-engine || { echo "engine repo — run this in your private repo"; exit 1; }   # engine-repo guard
 git status --porcelain                               # unrelated changes → stop & report
 git switch main && git pull --ff-only origin main
 git switch -c scout/<timestamp>

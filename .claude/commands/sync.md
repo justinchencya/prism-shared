@@ -19,6 +19,7 @@ Sync engine changes between **prism-shared** (public engine, canonical) and **pr
    ```
 
    Then drop the **expected diffs** (personal data that must never converge):
+   - `.prism-engine` — engine-repo marker; exists only in prism-shared, never copied to prism
    - `tracking/*.json` — real data in prism, empty templates in prism-shared
    - `dashboard/index.html` — generated output; template changes live in `scripts/generate_dashboard.py`
    - `.claude/scout-x-feeds.json` — real follows in prism, placeholder examples in prism-shared

@@ -51,7 +51,7 @@ Prism's outputs are personal — trades, reports, journal entries. The recommend
 
 Engine changes belong in the engine repo first, then flow to the private repo; changes made in the private repo during daily use get ported back — with anything personal stripped. `/sync` (`.claude/commands/sync.md`) automates both directions: it diffs the engine file set between the sibling checkouts, infers direction per file from git history, sanitizes anything flowing into the public repo, and lands the changes as a PR in the receiving repo. Engine files stay byte-identical across the pair; only the personal data ever differs.
 
-Single-repo use works fine too — just clone and go. The split only matters once you have data you don't want public.
+Single-repo use works fine too — clone, delete `.prism-engine` (the marker that stops data-writing commands from running in the public engine repo), and go. The split only matters once you have data you don't want public.
 
 ---
 

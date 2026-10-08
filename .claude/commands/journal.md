@@ -11,6 +11,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 ## Steps
 
 1. **Sync with main and resolve today's date** — do this before anything else:
+   - **Engine-repo guard**: if `.prism-engine` exists at the repo root, stop — this is the public engine repo; tell the user to run `/journal` in their private daily-driver repo.
    - **Clean-tree guard**: run `git status --porcelain`. Nothing has been written yet, so the tree should be clean — if it shows any changes, stop and report; never stash or sweep them in.
    - Run `git switch main && git pull --ff-only origin main` so `tracking/*.json` and `reports/` reflect the latest merged runs. If the switch or pull fails (uncommitted changes in the way, network error, non-fast-forward), report the error and stop — never stash, reset, or force anything.
    - **Resolve today's date from the system clock** by running `date +%Y-%m-%d` — never rely on a date carried in context, which may be stale. Use this value as "today" everywhere below (the entry `date`, `linked_at`, the entry `id` date segment, the branch name, `added_date` for any new candidate, and `last_updated`).
