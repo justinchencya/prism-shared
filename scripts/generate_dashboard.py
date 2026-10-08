@@ -1491,7 +1491,7 @@ def main():
             print(f"  {line}")
         if len(problems) > 20:
             print(f"  … and {len(problems) - 20} more")
-        print("Backfill them in tracking/ (see tracking/README.md) and rerun.")
+        print("Set horizon on these entries in tracking/ (schema: tracking/README.md) and rerun.")
         sys.exit(1)
 
     if preview:

@@ -61,9 +61,9 @@ Both `positions-thesis.json` positions and `candidates.json` entries share the s
 | `hypothesis` | string | 2-sentence falsifiable thesis from that run |
 | `entry_condition` | string \| null | Buy/add condition if verdict is Hold/Buy; null if Avoid |
 | `verdict` | string | `"Buy"` · `"Hold"` · `"Avoid"` |
-| `horizon` | string | **Required.** `"long"` · `"spec"` — the horizon the verdict was judged on (the run's horizon, from its `plan.md`). The same ticker can be Hold on `long` and Buy on `spec`; they're separate entries from separate runs. |
+| `horizon` | string | `"long"` · `"spec"` — horizon the verdict was judged on (one per run, recorded in its `plan.md`) |
 
-Reports are appended in chronological order. Reading them in sequence shows how the thesis evolved.
+Reports are appended in chronological order. Reading them in sequence shows how the thesis evolved. A ticker can carry entries of both horizons — e.g. a `long` Hold and a `spec` Buy from different runs.
 
 ---
 
@@ -102,7 +102,7 @@ Each object in an `events[]` array is a watchlist entry:
 | `id` | string | ✓ | Stable ID. Format: `TICKER-TYPE_SHORT-KEYWORD`. Never changed after creation. |
 | `ticker` | string | ✓ | Uppercase symbol (e.g. `PGR`) |
 | `type` | enum | ✓ | `"buy_trigger"` · `"falsifier"` · `"event_monitor"` |
-| `horizon` | enum | ✓ | `"long"` · `"spec"` — horizon of the run that created it. Fixed at creation, like `id`. A `spec` entry is a trade level / catalyst for a short-term position, not a multi-year thesis breaker. A run only updates entries of its own horizon; for a different horizon it creates a separate entry (on an `id` collision, suffix the new one `-SPEC`). |
+| `horizon` | enum | ✓ | `"long"` · `"spec"` — horizon of the run that created it. Never changed after creation; only same-horizon runs update it. |
 | `status` | enum | ✓ | `"active"` · `"resolved"` · `"stale"` |
 | `condition` | string | ✓ | Full prose description of the condition being monitored |
 | `watch` | string | ✓ | What specifically to check and at what threshold |
