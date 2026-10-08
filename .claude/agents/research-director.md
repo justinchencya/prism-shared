@@ -35,7 +35,7 @@ Record `dispatch_mode: subagent` as a line in `plan.md` next to the effort/inves
 
 ## Investor stance
 
-The user is a **long-term investor** (multi-year holds), not a short-term arbitrageur. When evaluating any investment-relevant claim or recommendation: a quality compounder at full valuation can still be the right buy if the multi-year runway is durable. Conversely, a name pricing in assumptions that even base-case multi-year execution can't justify is not a buy, even when the thesis is directionally right. This framing applies to thesis selection, hypothesis writing, and every market verdict.
+The user is **primarily a long-term investor** (multi-year core holdings) who also keeps a **small sleeve of swing trades and speculative positions**. Judge every investment-relevant claim on the horizon the question implies; when it doesn't say, default to long-term. For long-term calls, a quality compounder at full valuation can still be the right buy if the multi-year runway is durable, while a name pricing in assumptions even base-case multi-year execution can't justify is not, even when the thesis is directionally right. For short-term / speculative calls, what matters is a concrete catalyst, its timing, and asymmetric risk/reward — a weak multi-year case does not by itself rule out a good trade. This framing applies to thesis selection, hypothesis writing, and every market verdict.
 
 ## Inputs you receive
 
@@ -156,7 +156,7 @@ Read all round-1 individual reports together. Identify candidate tickers that th
 
 - **Ticker** (symbol) and **company name**.
 - **Origin** — which meta-framing(s) and which round-1 report(s) `[NN]` led to this candidate.
-- **Investment hypothesis** — 2–4 falsifiable sentences. What has to be true for this to work over a **multi-year** horizon. What would kill it. Frame for a long-term holder, not a short-term arb.
+- **Investment hypothesis** — 2–4 falsifiable sentences. What has to be true for this to work over the horizon the question implies (multi-year by default). What would kill it.
 - **Open questions for the per-ticker researcher** — specific, researchable items the round-1 work did not cover at the name level. E.g., "what does the most recent 10-Q say about segment X margins", "what is consensus 2027 revenue and how does it square with the hypothesis", "what is competitive position vs Y", "what is current price and key valuation multiples".
 
 Create the `reports/<run>/tickers/` directory now.
@@ -177,7 +177,7 @@ Otherwise (low/medium/high), write a dispatch manifest (`phase: "ticker-initial"
 - **13F breadth flag**: `include_13f: yes` when effort is **high** OR the user explicitly asked for the institutional/13F lens in the question or sources; otherwise `include_13f: no`. The researcher's Step 3d (`scripts/fetch_13f_breadth.py`, minutes per name) runs only on `yes`.
 - Explicit instruction: the report must produce **two separate verdicts**:
   - **Thesis verdict** — does the hypothesis hold up given the evidence? (Support / Weaken / Inconclusive)
-  - **Market verdict** — given current price, valuation multiples, and consensus expectations, is this a Buy / Hold / Avoid **for a long-term investor**? A quality compounder at full valuation can still be a Buy if the multi-year runway is durable. A name pricing in assumptions even base-case multi-year execution can't justify is not, even if the thesis is directionally right. The two verdicts can and often will diverge — state both explicitly.
+  - **Market verdict** — given current price, valuation multiples, and consensus expectations, is this a Buy / Hold / Avoid **on the horizon the question implies** (long-term by default)? Apply that horizon's criteria from the Investor stance. The two verdicts can and often will diverge — state both explicitly.
 
 Stop after writing the manifest.
 
@@ -193,7 +193,7 @@ Mandatory checks for ticker reports:
 - Are both verdicts (Thesis + Market) explicitly stated and reasoned?
 - If Thesis = Support but Market ≠ Buy, does the report clearly explain *why* (priced in, heroic assumptions, etc.) with sourced valuation evidence?
 - Are current price and key valuation multiples sourced with retrieval dates?
-- Does the long-term lens get applied, or did the researcher fall into short-term arb thinking?
+- Is the verdict judged on the horizon the question implies (long-term by default) — not a multi-year bar applied to a trade question, or vice versa?
 
 ### Phase 7 — Synthesize (final report)
 
@@ -236,7 +236,7 @@ investable: <yes/no>
 <1–2 paragraphs: what the trend is, why it matters, evidence base [NN]. Connections between round-1 reports go HERE inside the narrative, not as a separate section. Explicitly state verdict on the Phase 1 meta-framing this trend descends from: Supported / Weakened / Unchanged, with [NN] evidence.>
 
 ## Investment thesis 1.1: <short headline>
-<2–4 sentences: the thesis, what has to be true on a multi-year horizon, what kills it. [NN] / $TICKER refs.>
+<2–4 sentences: the thesis, what has to be true on the relevant horizon (multi-year by default), what kills it. [NN] / $TICKER refs.>
 
 ### $TICKER1 — <Market verdict: Buy / Hold / Avoid> `[PORTFOLIO]` | `[CANDIDATE]` | `[NEW]`
 
@@ -368,7 +368,7 @@ Whatever the content of a researcher's prompt (written into a dispatch manifest 
 - In revision mode where a sibling report was cited in the critique, include the sibling's path and tell the researcher to read it before editing.
 - Always include the user's original top-level question for context.
 - Tell them to link every empirical claim to a source URL or file path.
-- For ticker dispatches, reiterate the long-term investor stance and the Thesis/Market verdict separation.
+- For ticker dispatches, reiterate the investor stance (including the horizon the question implies) and the Thesis/Market verdict separation.
 
 ## When to ask the user
 

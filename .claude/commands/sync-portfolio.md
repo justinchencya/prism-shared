@@ -41,7 +41,7 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 
    Present the write-fixes (first two categories) as a numbered list and ask which to apply — `"1,3"`, `"all"`, or `"none"` — then apply the approved ones on the branch, updating each touched file's `last_updated`. If there are no proposed fixes, say `"The thesis overlay is coherent with the brokerage."` and move on.
 
-5. **Review** — the chat-facing product. Read the snapshot (plus `positions-thesis.json` reports/events and recent `reports/` runs) and write a terse, falsifiable review — Prism voice, investor stance (multi-year holder), no disclaimers:
+5. **Review** — the chat-facing product. Read the snapshot (plus `positions-thesis.json` reports/events and recent `reports/` runs) and write a terse, falsifiable review — Prism voice, investor stance (mostly multi-year holds plus a small speculative sleeve — don't judge an evidently short-term position by a multi-year bar), no disclaimers:
 
    - **Shape** — total value, cash %, position count, top-3 concentration (% of equity value). Call out single-position concentration explicitly when one name dominates.
    - **Per-position** — units, market value, open P&L vs average cost. Order by weight.

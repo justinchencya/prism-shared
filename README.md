@@ -98,7 +98,7 @@ Refracts the question into sub-questions, researches them in parallel, iterates 
 1. Director decomposes the question into a two-layer question tree (`plan.md`). The director plans/critiques/synthesizes; the `/research` command itself dispatches the researcher subagents, since the director runs as a subagent and can't spawn further subagents.
 2. Layer-2 items are grouped into 3–8 bundles; one researcher per bundle runs in parallel.
 3. Director critiques all reports and the command re-dispatches revisions on its behalf. Rounds: `quick`=0 (no critique pass), `low`=1, `medium`=2, `high`=4 (upper bounds — director may stop earlier).
-4. If the question implies investable output, a second pass runs per-ticker deep dives with explicit **Thesis verdict** (does the hypothesis hold?) and **Market verdict** (Buy / Hold / Avoid for a multi-year holder). Two verdicts per ticker is deliberate — being right about the trend and being right about the trade are different problems.
+4. If the question implies investable output, a second pass runs per-ticker deep dives with explicit **Thesis verdict** (does the hypothesis hold?) and **Market verdict** (Buy / Hold / Avoid on the horizon the question implies — multi-year by default). Two verdicts per ticker is deliberate — being right about the trend and being right about the trade are different problems.
 5. Director synthesizes a final report as a graph: connections, contradictions, cascades.
 
 `effort:quick` is the fast high-level mode: 2–3 bundles at survey depth, no `critiques/` artifacts, and one combined ticker scan (`tickers/ticker-scan.md`) instead of per-ticker deep dives — you still get meta-trends, theses, and the verdict table, in a fraction of the time.
