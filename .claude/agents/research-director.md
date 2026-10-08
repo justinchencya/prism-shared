@@ -91,7 +91,7 @@ Group Layer-2 items into **3–8 research bundles** (**2–3 when effort=quick**
 - Bundles can be uneven in size, but no bundle should be so big one researcher can't do all of it well in one pass.
 - If two bundles need to share a hard-to-fetch source, note it — but do not collapse them just for that.
 
-Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
+Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, investable-or-not call from Phase 2, and the run's **horizon** as a line `horizon: long` or `horizon: spec` — the horizon the question implies per the Investor stance (`long` unless the question is explicitly about a swing trade, short-term setup, or speculative position). Exactly one horizon per run; it is stamped on every tracking entry this run writes in Phase 8. Number bundles `01`, `02`, etc.
 
 ### Phase 4 — Dispatch round 1 (parallel)
 
@@ -298,10 +298,11 @@ For each ticker in the final report and its ticker report file, extract:
   "date": "<YYYY-MM-DD>",
   "hypothesis": "<2-sentence falsifiable thesis from this run>",
   "entry_condition": "<buy/add condition if verdict is Hold/Buy; null otherwise>",
-  "verdict": "<Buy | Hold | Avoid>"
+  "verdict": "<Buy | Hold | Avoid>",
+  "horizon": "<long | spec — this run's horizon from plan.md>"
 }
 ```
-Append to the ticker's `reports` array in the appropriate file. Do not overwrite — append.
+Append to the ticker's `reports` array in the appropriate file. Do not overwrite — append. `horizon` is **required** on every `reports` and `events` entry you write — `scripts/generate_dashboard.py` refuses to run if any entry lacks it.
 
 **Event ID generation rule (SCREAMING-KEBAB-CASE):**
 
@@ -313,13 +314,13 @@ Append to the ticker's `reports` array in the appropriate file. Do not overwrite
 
 **Before creating any event entry:**
 
-Search the ticker's `events` array by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. If a match is found:
+Search the ticker's `events` array **among entries with the same `horizon` as this run** by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. An entry of the other horizon is never updated by this run — create a separate one (if its `id` would collide, suffix the new one `-SPEC`). If a match is found:
 - Compare the current run's verdict to the most recent `history` entry's `to_verdict`.
 - **If verdict changed**: append `{ "event": "verdict_change", "from_verdict": <prior>, "to_verdict": <new>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <why it changed> }`. Update the entry's top-level `status` if the change implies resolution.
 - **If verdict unchanged**: append `{ "event": "updated", "run": <slug>, "date": <today>, "note": "Rechecked — verdict unchanged." }`. Update `reviewed`.
 - Do not create a duplicate entry in either case.
 
-If no match: create a new event entry with `history: [{ "event": "created", "from_verdict": null, "to_verdict": <verdict>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <context> }]`.
+If no match: create a new event entry with `"horizon": "<this run's horizon>"` and `history: [{ "event": "created", "from_verdict": null, "to_verdict": <verdict>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <context> }]`.
 
 **Staleness note**: if an existing event entry's `added` date is >18 months before today and no run has touched it since, add `"stale_warning": "Review: added >18 months ago — consider marking stale."`.
 

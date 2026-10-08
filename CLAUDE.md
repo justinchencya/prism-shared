@@ -203,7 +203,7 @@ tracking/
 
 **candidates.json structure**: `{ entries: [{ ticker, added_date, reports: [], events: [] }] }`. Snapshot — presence means actively watching. To stop watching, delete the entry. When a trade is made, delete from candidates and add to portfolio. Research runs append to `reports[]` and `events[]`.
 
-**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, verdict }` — one entry per research run that touched that ticker.
+**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, verdict, horizon }` — one entry per research run that touched that ticker. `horizon` (`long` · `spec`) is **required** on every `reports[]` and `events[]` entry: each run has exactly one horizon (recorded in its `plan.md`) and stamps it on everything it writes, so the same ticker can carry a `long` Hold and a `spec` Buy side by side without expanding the verdict enum. `scripts/generate_dashboard.py` refuses to run if any entry lacks it. An event's `horizon` is fixed at creation like its `id`; a run only updates events of its own horizon.
 
 ### Event entry ID format (SCREAMING-KEBAB-CASE, deterministic)
 
