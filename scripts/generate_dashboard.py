@@ -2,7 +2,6 @@
 """Generate dashboard/index.html — research-to-trade performance tracker."""
 
 import json
-import os
 import re
 import sys
 import time
@@ -349,46 +348,6 @@ def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: di
             })
     rows.sort(key=lambda r: (r["trade_date"], r["ticker"]))
     return rows
-
-
-def build_pnl_by_alignment(trades: list, alignment_rows: list, prices: dict) -> dict:
-    """Unrealized P&L on buy/add lots, bucketed by each trade's research alignment.
-
-    Each lot is judged by its own entry price vs. the current price (not pooled
-    avg cost), so a trade's P&L reflects the decision it represents. Sells/trims
-    are excluded — this is an open-lot unrealized view.
-    """
-    align_by_id = {r["trade_id"]: r["alignment"] for r in alignment_rows}
-    buckets = {k: {"trades": 0, "cost": 0.0, "value": 0.0}
-               for k in ("aligned", "misaligned", "neutral", "unlinked")}
-    for t in trades:
-        if t["action"] not in ("buy", "add"):
-            continue
-        shares, price = t.get("shares"), t.get("price_per_share")
-        cp = prices.get(t["ticker"])
-        if not (shares and price and cp):
-            continue
-        b = buckets[align_by_id.get(t["id"], "unlinked")]
-        b["trades"] += 1
-        b["cost"] += shares * price
-        b["value"] += shares * cp
-
-    def summarize(d: dict) -> dict:
-        pnl = d["value"] - d["cost"]
-        return {
-            "trades": d["trades"],
-            "cost": round(d["cost"], 2),
-            "value": round(d["value"], 2),
-            "pnl_usd": round(pnl, 2),
-            "pnl_pct": round(pnl / d["cost"] * 100, 2) if d["cost"] else None,
-        }
-
-    result = {k: summarize(v) for k, v in buckets.items()}
-    total = {"trades": sum(v["trades"] for v in buckets.values()),
-             "cost": sum(v["cost"] for v in buckets.values()),
-             "value": sum(v["value"] for v in buckets.values())}
-    result["all"] = summarize(total)
-    return result
 
 
 def build_value_series(trades: list, history: dict) -> dict:

@@ -100,7 +100,7 @@ The remote is named `origin`; the branch `research/<id>` matches its run dir (e.
 ## Examples
 
 `/research How is the AI capex cycle affecting electric utility load growth?`
-→ effort=medium, no sources
+→ no effort flag → asks which level (quick recommended); no sources
 
 `/research Which companies benefit most from on-shoring of advanced packaging? effort:high`
 → implies tickers; 4 revision rounds allowed

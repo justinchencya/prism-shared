@@ -169,7 +169,7 @@ Logs an investment action to the Notion Investment Log database, links it to the
 
 1. Parses your natural-language description into trade fields — ticker, amount, action (`buy`/`add`/`trim`/`sell`), and optional shares, price, and comment.
 2. Finds research runs that covered the ticker and asks which informed the trade, then inserts the row into the Notion Investment Log database with the research linked as a hyperlink in the Comment.
-3. Updates the tracking layer: `trades.json` always; the thesis overlay (`positions-thesis.json` / `candidates.json`) only to *move an existing thesis* when a watched name is bought (candidate → positions-thesis) or prune one when a held name is fully exited — a bought name with no thesis gets no stub (holdings live in the brokerage snapshot). Regenerates the dashboard.
+3. Updates the tracking layer: `trades.json` always; the thesis overlay (`positions-thesis.json` / `candidates.json`) only to *move an existing thesis* when a watched name is bought (candidate → positions-thesis) or prune one when a held name is fully exited — a bought name with no thesis gets no stub (holdings live in the brokerage snapshot). Optionally regenerates the dashboard (asked at commit time — it fetches live prices).
 4. Lands on its own branch + Pull Request, same as every other command.
 
 **Requirements:** a Notion integration token in `NOTION_TOKEN` (the MCP server wired in `.mcp.json` reads it from `.env`), with your Investment Log database shared to that integration. Optionally pin the database via `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` / `NOTION_INVESTMENT_LOG_DATABASE_ID` (otherwise it's resolved by name). Without Notion configured, `/log-trade` still records every trade locally in `trades.json`. See the **Setup** section and `.env.example`.
@@ -194,9 +194,9 @@ Captures a free-form reflection — a hesitation, an imagined scenario, a road n
 
 **How it works:**
 
-1. Takes your reflection text verbatim.
+1. Takes your raw reflection and helps refine it into clearer prose — keeping your voice, stance, and doubts — before saving the version you approve.
 2. Always asks which research runs and tickers to link, suggesting matches from the text (recent runs, and tickers tagged `[PORTFOLIO]` / `[CANDIDATE]` / `[NEW]`). A linked `[NEW]` ticker can be added to `candidates.json` on the spot.
-3. Appends the entry to `journal.json`, regenerates the dashboard (the entry shows as a violet node in the Timeline), and lands on its own branch + Pull Request.
+3. Appends the entry to `journal.json`, optionally regenerates the dashboard (the entry shows as a violet node in the Timeline), and lands on its own branch + Pull Request.
 
 **Output** → `tracking/journal.json` (and a timeline node in the dashboard)
 
@@ -288,7 +288,7 @@ Research runs accumulate a persistent tracking layer across seven JSON files in 
 
 **How it closes the loop:**
 
-- Every `/scout` run reads all three files. Signals about held tickers surface as **Portfolio signals**; signals matching active event entries surface as **Watchlist alerts**; everything else is **New candidates** — all in separate brief sections.
+- Every `/scout` run reads the holdings (`brokerage-snapshot.json`), the thesis overlay, `candidates.json`, and `catalysts.json`. Signals about held tickers surface as **Portfolio signals**; signals matching active event entries surface as **Watchlist alerts**; everything else is **New candidates** — all in separate brief sections.
 - The final report tags each ticker block as `[PORTFOLIO]`, `[CANDIDATE]`, or `[NEW]` so the framing is always relative to your actual holdings.
 - When a catalyst fires, a `/research` run on the event resolves the catalyst entry and propagates history events to all affected ticker entries.
 
