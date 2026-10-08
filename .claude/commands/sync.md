@@ -15,7 +15,8 @@ Sync engine changes between **prism-shared** (public engine, canonical) and **pr
    ```bash
    diff -rq <shared> <prism> \
      --exclude=.git --exclude=reports --exclude=scouts --exclude=memos \
-     --exclude=.env --exclude=.DS_Store
+     --exclude=.env --exclude=.DS_Store --exclude=__pycache__ \
+     --exclude=price-cache.json --exclude=cusip-map.json   # gitignored local caches
    ```
 
    Then drop the **expected diffs** (personal data that must never converge):

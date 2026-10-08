@@ -12,3 +12,7 @@ __pycache__/
 # regenerable optimization, refetched whole per ticker per day.
 tracking/price-cache.json
 
+# Ticker -> CUSIP cache written by scripts/fetch_13f_breadth.py — regenerable
+# (one lookup per ticker), local to each checkout.
+.claude/cusip-map.json
+
