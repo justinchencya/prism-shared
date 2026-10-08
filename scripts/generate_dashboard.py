@@ -93,6 +93,29 @@ def load_research_runs() -> list:
     return runs
 
 
+HORIZONS = ("long", "spec")
+
+
+def validate_horizons(theses: dict, candidates: dict) -> list:
+    """Every reports[]/events[] entry must carry horizon "long" or "spec"."""
+    problems = []
+    for fname, entries in (("positions-thesis.json", theses), ("candidates.json", candidates)):
+        for ticker, entry in entries.items():
+            for kind in ("reports", "events"):
+                for item in entry.get(kind, []):
+                    if item.get("horizon") not in HORIZONS:
+                        label = item.get("run") or item.get("id") or "?"
+                        problems.append(f"{fname} {ticker} {kind}[] {label}: horizon={item.get('horizon')!r}")
+    return problems
+
+
+def build_horizon_lookup(theses: dict, candidates: dict) -> dict:
+    """Build {(ticker, run): horizon} from thesis and candidates reports[]."""
+    return {(ticker, r["run"]): r["horizon"]
+            for ticker, entry in {**theses, **candidates}.items()
+            for r in entry.get("reports", []) if r.get("run")}
+
+
 def build_verdict_lookup(theses: dict, candidates: dict) -> dict:
     """Build {(ticker, run): verdict} from thesis and candidates reports[]."""
     lookup = {}
@@ -246,7 +269,8 @@ def fetch_price_history(tickers: set, start_date: str) -> dict:
 # Data transformation
 # ---------------------------------------------------------------------------
 
-def build_timeline(runs: list, trades: list, journal: list | None = None, verdict_lookup: dict | None = None) -> list:
+def build_timeline(runs: list, trades: list, journal: list | None = None, verdict_lookup: dict | None = None,
+                   horizon_lookup: dict | None = None) -> list:
     events = []
     for r in runs:
         events.append({"type": "research", **r})
@@ -259,7 +283,8 @@ def build_timeline(runs: list, trades: list, journal: list | None = None, verdic
             verdict = link.get("market_verdict")
             if verdict is None and verdict_lookup:
                 verdict = verdict_lookup.get((ticker, link.get("run")))
-            enriched_links.append({**link, "market_verdict": verdict})
+            horizon = (horizon_lookup or {}).get((ticker, link.get("run")))
+            enriched_links.append({**link, "market_verdict": verdict, "horizon": horizon})
         events.append({"type": "trade", **t, "linked_research": enriched_links})
     events.sort(key=lambda e: e["date"])
     return events
@@ -286,7 +311,8 @@ def _days_lag(trade_date: str, research_date: str) -> int | None:
         return None
 
 
-def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: dict | None = None) -> list:
+def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: dict | None = None,
+                    horizon_lookup: dict | None = None) -> list:
     prices = prices or {}
     rows = []
     for trade in trades:
@@ -326,6 +352,7 @@ def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: di
                     "run": link.get("run"),
                     "date": link.get("date"),
                     "verdict": verdict,
+                    "horizon": (horizon_lookup or {}).get((ticker, link.get("run"))),
                     "alignment": _alignment(trade["action"], verdict),
                     "days_lag": _days_lag(trade["date"], link.get("date", "")),
                 })
@@ -762,6 +789,7 @@ h3 { font-size: 14px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; }
 .badge.trim { background: #3b2800; color: #fb923c; }
 .badge.add { background: #064e3b; color: #34d399; }
 .badge.research { background: #1e3a5f; color: #60a5fa; }
+.badge.spec { background: #3b2800; color: #fbbf24; }
 .badge.journal { background: #2e1065; color: #c4b5fd; }
 .badge.ticker { background: #1e293b; color: #94a3b8; }
 .badge.investable { background: #312e81; color: #a5b4fc; }
@@ -1123,6 +1151,11 @@ function sortTable(col) {
   renderAlignmentRows(rows);
 }
 
+// Long is the norm; only flag the speculative sleeve.
+function specTag(h) {
+  return h === 'spec' ? ' <span class="badge spec" style="font-size:10px">spec</span>' : '';
+}
+
 function renderAlignmentRows(rows) {
   const tbody = document.getElementById('align-tbody');
   tbody.innerHTML = rows.map(r => {
@@ -1132,7 +1165,7 @@ function renderAlignmentRows(rows) {
           const slug = l.run ? l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '') : '?';
           const lag = l.days_lag != null ? ` <span style="color:#64748b">${l.days_lag}d</span>` : '';
           const verdict = l.verdict ? ` <span class="badge ${l.verdict.toLowerCase()}" style="font-size:10px">${l.verdict}</span>` : '';
-          return `<div style="white-space:nowrap" title="${l.run||''}">${slug}${verdict}${lag}</div>`;
+          return `<div style="white-space:nowrap" title="${l.run||''}">${slug}${verdict}${specTag(l.horizon)}${lag}</div>`;
         }).join('');
     let pnlHtml = '—';
     if (r.pnl_pct != null) {
@@ -1185,7 +1218,7 @@ function renderTimeline() {
       const links = (e.linked_research||[]).map(l => {
         const v = l.market_verdict;
         const vBadge = v ? ` <span class="badge ${v.toLowerCase()}" style="font-size:10px">${v}</span>` : ' <span style="color:#64748b;font-size:10px">?</span>';
-        return `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${vBadge}`;
+        return `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${vBadge}${specTag(l.horizon)}`;
       }).join(' ');
       const price = e.price_per_share ? ` @ $${e.price_per_share}` : '';
       return `<div class="tl-item trade"><div class="tl-dot"></div>
@@ -1214,10 +1247,10 @@ function renderTicker(ticker) {
 
   const researchHtml = d.research_history.map(r =>
     `<tr><td>${r.date}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.run}">${r.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</td>
-     <td><span class="badge ${(r.verdict||'').toLowerCase()}">${r.verdict||'—'}</span></td></tr>`).join('');
+     <td><span class="badge ${(r.verdict||'').toLowerCase()}">${r.verdict||'—'}</span>${specTag(r.horizon)}</td></tr>`).join('');
 
   const eventsHtml = d.events.map(ev =>
-    `<div class="event-item"><div class="event-type">${ev.type||''}</div><div>${ev.condition||''}</div></div>`).join('') || '<div style="color:#64748b;font-size:12px">No active events</div>';
+    `<div class="event-item"><div class="event-type">${ev.type||''}${specTag(ev.horizon)}</div><div>${ev.condition||''}</div></div>`).join('') || '<div style="color:#64748b;font-size:12px">No active events</div>';
 
   document.getElementById('ticker-panel').innerHTML = `
     <div class="ticker-panel">
@@ -1451,6 +1484,16 @@ def main():
     journal = load_journal()
     hypotheticals = load_hypotheticals()
 
+    problems = validate_horizons(theses, candidates)
+    if problems:
+        print(f"ERROR: {len(problems)} tracking entries lack a valid horizon (\"long\" | \"spec\"):")
+        for line in problems[:20]:
+            print(f"  {line}")
+        if len(problems) > 20:
+            print(f"  … and {len(problems) - 20} more")
+        print("Set horizon on these entries in tracking/ (schema: tracking/README.md) and rerun.")
+        sys.exit(1)
+
     if preview:
         # preview targets one scenario, active or not — no HTML is written
         scenarios = [s for s in hypotheticals
@@ -1488,8 +1531,9 @@ def main():
     prices = fetch_current_prices(priced_tickers)
 
     verdict_lookup = build_verdict_lookup(theses, candidates)
-    timeline = build_timeline(runs, trades, journal, verdict_lookup)
-    alignment = build_alignment(trades, verdict_lookup, prices)
+    horizon_lookup = build_horizon_lookup(theses, candidates)
+    timeline = build_timeline(runs, trades, journal, verdict_lookup, horizon_lookup)
+    alignment = build_alignment(trades, verdict_lookup, prices, horizon_lookup)
     per_ticker = build_per_ticker(theses, candidates, trades, prices)
     pnl_drivers = build_pnl_drivers(trades, prices, alignment)
 

@@ -203,7 +203,9 @@ tracking/
 
 **candidates.json structure**: `{ entries: [{ ticker, added_date, reports: [], events: [] }] }`. Snapshot — presence means actively watching. To stop watching, delete the entry. When a trade is made, delete from candidates and add to portfolio. Research runs append to `reports[]` and `events[]`.
 
-**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, verdict }` — one entry per research run that touched that ticker.
+**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, verdict, horizon }` — one entry per research run that touched that ticker.
+
+**Horizon**: every `reports[]` and `events[]` entry carries `horizon` (`long` · `spec`) — the horizon of the run that wrote it (one per run, recorded in `plan.md`). Verdict and horizon are independent dimensions, so a ticker can carry a `long` Hold and a `spec` Buy at the same time. An event's `horizon` is fixed at creation, like its `id`, and only runs of the same horizon update it.
 
 ### Event entry ID format (SCREAMING-KEBAB-CASE, deterministic)
 

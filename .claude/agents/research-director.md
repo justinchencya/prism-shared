@@ -91,7 +91,7 @@ Group Layer-2 items into **3–8 research bundles** (**2–3 when effort=quick**
 - Bundles can be uneven in size, but no bundle should be so big one researcher can't do all of it well in one pass.
 - If two bundles need to share a hard-to-fetch source, note it — but do not collapse them just for that.
 
-Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
+Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, horizon (`long` | `spec` — the horizon the question implies, per the Investor stance), and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
 
 ### Phase 4 — Dispatch round 1 (parallel)
 
@@ -281,6 +281,8 @@ After writing `final-report.md`, update `tracking/positions-thesis.json`, `track
 
 #### 8a — Ticker-level events (positions-thesis.json + candidates.json)
 
+Every entry written in this phase carries the run's `horizon` from `plan.md`.
+
 For each ticker in the final report and its ticker report file, extract:
 1. Hold/Avoid verdict with an explicit price level or condition that would flip to Buy → `type: "buy_trigger"`
 2. Falsifier bullets requiring ongoing monitoring (quarterly metrics, regulatory outcomes, competitive data points — not established historical facts) → `type: "falsifier"`
@@ -298,7 +300,8 @@ For each ticker in the final report and its ticker report file, extract:
   "date": "<YYYY-MM-DD>",
   "hypothesis": "<2-sentence falsifiable thesis from this run>",
   "entry_condition": "<buy/add condition if verdict is Hold/Buy; null otherwise>",
-  "verdict": "<Buy | Hold | Avoid>"
+  "verdict": "<Buy | Hold | Avoid>",
+  "horizon": "<long | spec>"
 }
 ```
 Append to the ticker's `reports` array in the appropriate file. Do not overwrite — append.
@@ -313,13 +316,13 @@ Append to the ticker's `reports` array in the appropriate file. Do not overwrite
 
 **Before creating any event entry:**
 
-Search the ticker's `events` array by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. If a match is found:
+Search the ticker's `events` array (same `horizon` only) by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. Events of the other horizon are separate entries — never update them from this run; on an `id` collision, suffix the new one `-SPEC`. If a match is found:
 - Compare the current run's verdict to the most recent `history` entry's `to_verdict`.
 - **If verdict changed**: append `{ "event": "verdict_change", "from_verdict": <prior>, "to_verdict": <new>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <why it changed> }`. Update the entry's top-level `status` if the change implies resolution.
 - **If verdict unchanged**: append `{ "event": "updated", "run": <slug>, "date": <today>, "note": "Rechecked — verdict unchanged." }`. Update `reviewed`.
 - Do not create a duplicate entry in either case.
 
-If no match: create a new event entry with `history: [{ "event": "created", "from_verdict": null, "to_verdict": <verdict>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <context> }]`.
+If no match: create a new event entry with `horizon: <run horizon>` and `history: [{ "event": "created", "from_verdict": null, "to_verdict": <verdict>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <context> }]`.
 
 **Staleness note**: if an existing event entry's `added` date is >18 months before today and no run has touched it since, add `"stale_warning": "Review: added >18 months ago — consider marking stale."`.
 

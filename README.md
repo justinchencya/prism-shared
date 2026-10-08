@@ -283,7 +283,7 @@ Research runs accumulate a persistent tracking layer across seven JSON files in 
 
 **How it feeds:**
 
-- Every `/research` run appends to these files (Phase 8 of the director). For held tickers (per `brokerage-snapshot.json`) and tickers in `candidates.json`: the run adds a `reports[]` entry (thesis, entry condition, verdict) and updates `events[]` (buy triggers, falsifiers, event monitors) — creating a `positions-thesis.json` entry when a held name gets its first thesis. Other new tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`.
+- Every `/research` run appends to these files (Phase 8 of the director). For held tickers (per `brokerage-snapshot.json`) and tickers in `candidates.json`: the run adds a `reports[]` entry (thesis, entry condition, verdict, horizon) and updates `events[]` (buy triggers, falsifiers, event monitors) — creating a `positions-thesis.json` entry when a held name gets its first thesis. Other new tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`.
 - Each event entry carries a `history` array — verdict changes, rechecks, and resolutions are logged with timestamps and source files.
 
 **How it closes the loop:**

@@ -32,13 +32,15 @@ Both `positions-thesis.json` positions and `candidates.json` entries share the s
       "date": "2026-05-29",
       "hypothesis": "2-sentence falsifiable thesis from this run",
       "entry_condition": "Buy below $130 on pullback",
-      "verdict": "Buy"
+      "verdict": "Buy",
+      "horizon": "long"
     }
   ],
   "events": [
     {
       "id": "NVDA-BUY-130",
       "type": "buy_trigger",
+      "horizon": "long",
       "status": "active",
       "condition": "...",
       "watch": "...",
@@ -59,8 +61,9 @@ Both `positions-thesis.json` positions and `candidates.json` entries share the s
 | `hypothesis` | string | 2-sentence falsifiable thesis from that run |
 | `entry_condition` | string \| null | Buy/add condition if verdict is Hold/Buy; null if Avoid |
 | `verdict` | string | `"Buy"` · `"Hold"` · `"Avoid"` |
+| `horizon` | string | `"long"` · `"spec"` — horizon the verdict was judged on (one per run, recorded in its `plan.md`) |
 
-Reports are appended in chronological order. Reading them in sequence shows how the thesis evolved.
+Reports are appended in chronological order. Reading them in sequence shows how the thesis evolved. A ticker can carry entries of both horizons — e.g. a `long` Hold and a `spec` Buy from different runs.
 
 ---
 
@@ -99,6 +102,7 @@ Each object in an `events[]` array is a watchlist entry:
 | `id` | string | ✓ | Stable ID. Format: `TICKER-TYPE_SHORT-KEYWORD`. Never changed after creation. |
 | `ticker` | string | ✓ | Uppercase symbol (e.g. `PGR`) |
 | `type` | enum | ✓ | `"buy_trigger"` · `"falsifier"` · `"event_monitor"` |
+| `horizon` | enum | ✓ | `"long"` · `"spec"` — horizon of the run that created it. Never changed after creation; only same-horizon runs update it. |
 | `status` | enum | ✓ | `"active"` · `"resolved"` · `"stale"` |
 | `condition` | string | ✓ | Full prose description of the condition being monitored |
 | `watch` | string | ✓ | What specifically to check and at what threshold |

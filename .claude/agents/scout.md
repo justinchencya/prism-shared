@@ -74,7 +74,7 @@ Read the following files if they exist (skip gracefully if absent):
 - `tracking/catalysts.json` → **active_catalysts**: `description` text from active entries, keyed by `id`
 
 From the combined `events` arrays of the thesis overlay and candidate entries, extract:
-- **active_conditions**: `condition` + `watch` text from active `falsifier` and `event_monitor` entries, keyed by `id`
+- **active_conditions**: `condition` + `watch` text from active `falsifier` and `event_monitor` entries, keyed by `id`, with each entry's `horizon` — a `spec` entry is a short-term trade level/catalyst, so label it as such and never present it as a multi-year thesis breaker
 
 Do not edit any of these files. This context feeds Phase 5 (scoring) and Phase 6 (brief writing).
 

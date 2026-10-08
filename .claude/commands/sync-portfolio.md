@@ -50,8 +50,8 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
      - **Expiry proximity** — contracts expiring within ~2 weeks, and any whose expiry has already passed relative to today (a stale line the brokerage hasn't cleared yet). Note assignment risk where the underlying's current price is through the strike.
      State "no open option contracts" when the array is empty, and say so plainly if `options[]` is absent from an older snapshot rather than inferring none.
    - **Held without a thesis** — held positions whose ticker has no `reports[]` entry in `positions-thesis.json`: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. This is the overlay's main gap-finder — the snapshot knows *what* is held; this flags *what lacks a why*.
-   - **Active events on held names** — surface `events[]` with `status: "active"` (buy triggers, falsifiers, monitors) for held tickers; flag any where recent snapshot activity or price is near the condition.
-   - **Thesis staleness** — held names whose latest `reports[]` entry is >6 months old.
+   - **Active events on held names** — surface `events[]` with `status: "active"` (buy triggers, falsifiers, monitors) for held tickers; flag any where recent snapshot activity or price is near the condition. Label each with its `horizon`: a `spec` event is a trade level/catalyst for a short-term position, not a multi-year thesis breaker.
+   - **Thesis staleness** — held names whose latest `long` `reports[]` entry is >6 months old; separately, `spec` entries/events older than ~3 months are likely expired trades — suggest marking them stale.
    - **Recent activity** — notable buys/sells/dividends/deposits from the lookback window, cross-linked to `trades.json`/journal entries where they exist.
    - If the user gave a focus hint, weight the review toward it. State "unknown" where the snapshot doesn't answer something; never fill gaps fluently.
 
