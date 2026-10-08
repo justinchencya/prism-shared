@@ -32,7 +32,7 @@ Source:
 
 CUSIP resolution:
   13F info tables key on CUSIP, not ticker, and no free API maps ticker->CUSIP
-  directly. The script keeps a lazily-grown cache at .claude/cusip-map.json.
+  directly. The script keeps a lazily-grown cache at .claude/cusip-map.json (gitignored).
   For an uncached ticker, pass --cusip (the caller looks it up once — it's on
   the company's IR page, prospectuses, or any 13F aggregator). Foreign issuers
   use a CINS with a letter prefix (e.g. Seagate: G7997R103) — pass it verbatim.

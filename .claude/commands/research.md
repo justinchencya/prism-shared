@@ -75,9 +75,7 @@ After the director's Phase 9 report-back (final report path, verdict table, etc.
 
 ```bash
 cd <repo-root>
-git add reports/<id> tracking/ .claude/cusip-map.json   # + dashboard/index.html if regenerated in Step 3
-# (.claude/cusip-map.json: the 13F script may cache a newly resolved CUSIP during the run —
-#  stage it with the run so the tree is clean after merge; a no-op when unchanged)
+git add reports/<id> tracking/   # + dashboard/index.html if regenerated in Step 3
 git commit -m "research: <slug> (<date>)"
 git push -u origin research/<id>
 ```
