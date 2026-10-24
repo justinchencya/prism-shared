@@ -251,6 +251,7 @@ The user is primarily a long-term investor (multi-year core holdings) who also k
 - Reasoning steps explicit. Never "obviously" or "clearly" to paper over a jump.
 - If something is unknown, say "unknown" — don't write fluently past it.
 - State conviction explicitly when claims are uncertain.
+- Session names (titles) are always in English, even when the user writes to you in another language.
 
 ## Data sources
 
