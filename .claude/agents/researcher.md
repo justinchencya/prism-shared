@@ -54,7 +54,7 @@ Process:
    - `history`: quarterly revenue (B), gross margin, operating margin, and YoY revenue growth for up to 8 quarters — use these to identify acceleration/deceleration and margin trends
    - `price_history`: monthly closes for 3 years — use for multiple expansion/contraction context relative to fundamentals
    - `technicals`: an entry-timing / positioning lens computed from daily prices (all decimals) — 50/200-day MAs + `pct_vs_sma50/200`, `rsi14`, trailing `return_1m/3m/6m/12m`, `pct_from_52w_high/low`, `rel_strength_vs_spy` (excess return vs SPY over 3m/6m — the closest free proxy for where capital is flowing), and a `volume` trend (`ratio_20d_vs_3m`).
-   - `technicals.structure`: the chart-structure read (from `scripts/technical_structure.py`) — `trend` (趋势: MA stack 20/50/100/200 + slopes, major-swing structure, `structure_status` vs the last swing high/low, ADX + direction, last 50/200 cross), `macd` (DIF/DEA/hist + last cross), `divergences` (顶背离 `bearish` / 底背离 `bullish`, price pivot vs RSI14 or MACD DIF), `chips` (筹码分布: turnover-decay cost distribution — `peaks` 筹码峰, `avg_cost`, `profit_ratio` 获利比例, 70%/90% cost ranges), `volume_profile` (12-month POC + value area), `anchored_vwap` (from the 52-week high and low), `levels` (clustered `supports` / `resistances` with their sources and `confluence` count, `break_level` 破位线 + `confirmed_break_rule`, ATR14), `recent_breaks` (levels crossed in the last 10 sessions with volume ratio).
+   - `technicals.structure`: the chart-structure read (from `scripts/technical_structure.py`) — `trend` (MA stack 20/50/100/200 + slopes, major-swing structure, `structure_status` vs the last swing high/low, ADX + direction, last 50/200 cross), `macd` (DIF/DEA/hist + last cross), `divergences` (`bearish` / `bullish`, price pivot vs RSI14 or MACD DIF), `chips` (turnover-decay holder-cost distribution — `peaks`, `avg_cost`, `profit_ratio`, 70%/90% cost ranges), `volume_profile` (12-month POC + value area), `anchored_vwap` (from the 52-week high and low), `levels` (clustered `supports` / `resistances` with their sources and `confluence` count, `break_level` + `confirmed_break_rule`, ATR14), `recent_breaks` (levels crossed in the last 10 sessions with volume ratio).
    - `technicals.chart`: filename of the annotated daily K-line chart written next to the JSON (`reports/<run>/tickers/chart_<TICKER>.png`) — candles, MAs, AVWAPs, swing pivots, support/resistance, the break level, divergence lines, chip distribution, volume, MACD, RSI.
    - `edgar_cross_check`: annual revenue from EDGAR 10-K filings — sanity-check yfinance figures against reported data
 
@@ -71,7 +71,7 @@ Process:
       - valuation stretched + strong setup → **Hold** (don't chase);
       - valuation doesn't work → **Avoid**, whatever the chart.
       Say in the reasoning which part of the verdict came from the setup.
-   3. **Write the Key levels** (template below): add zone, reclaim, break (破位), overhead — concrete prices from `structure.levels`, chip peaks, volume profile, AVWAPs and MAs (adjust any level the chart shows better, and say why). Each row says what makes the level real and what to do there. The break row carries the confirmed-break rule from `levels.break_level`. What a break means depends on why the position is held: no new buys below it in any case; a position held as a trade exits; a long-term core holding is never sold on a level alone — a break pauses adds and prompts a thesis check.
+   3. **Write the Key levels** (template below): add zone, reclaim, break, overhead — concrete prices from `structure.levels`, chip peaks, volume profile, AVWAPs and MAs (adjust any level the chart shows better, and say why). Each row says what makes the level real and what to do there. The break row carries the confirmed-break rule from `levels.break_level`. What a break means depends on why the position is held: no new buys below it in any case; a position held as a trade exits; a long-term core holding is never sold on a level alone — a break pauses adds and prompts a thesis check.
    4. **Derive each read from named evidence** — cite the JSON field or the visible chart feature, so the user can check it on the chart and learn the method. Fold the add/reclaim levels into **Entry condition**.
 
    Limits to state, not paper over: price data can't show *who* is selling. A break below a large chip peak on ≥1.5× volume is *consistent with* large holders exiting — never write that institutions are selling unless 13F (Step 3d) or a filing shows it. The chip model approximates holder cost from volume and float; it is not holder data. Do **not** emit buy/sell calls from RSI/MACD thresholds alone. If `technicals.structure` or the chart is missing, say so in one line and set levels from the basic `technicals` fields (MAs, 52-week range).
@@ -234,7 +234,7 @@ As of the <YYYY-MM-DD> close, $<price>. Trend: <up / down / range — one clause
 |-------|-------|---------------|------------------|
 | Add zone | $A–$B | <e.g. 12m POC + Mar swing-low cluster, 38% of chips below> | <staged add if the thesis holds> |
 | Reclaim | $C | <e.g. biggest chip peak + 50-day MA — trapped supply overhead> | <setup repaired above it; adds resume> |
-| Break (破位) | $D | <e.g. Jan swing low + value-area low> | <confirmed break = <rule>. No new buys below it; exit if held as a trade> |
+| Break | $D | <e.g. Jan swing low + value-area low> | <confirmed break = <rule>. No new buys below it; exit if held as a trade> |
 | Overhead | $E | <e.g. AVWAP from the 52-week high> | <where a bounce likely stalls / trim zone> |
 <Omit a row only if it genuinely doesn't apply, and say why in one clause.>
 
@@ -265,9 +265,9 @@ As of the <YYYY-MM-DD> close, $<price>. Trend: <up / down / range — one clause
 ## Technical read
 <Depth scales with the question: when the question is about the chart (support, breakdown, pattern, entry level, "should I add here"), write the full read below; otherwise 2–3 sentences covering trend, divergence if any, and relative strength.>
 
-**Trend (趋势):** <up / down / range — and why: swing structure, MA stack, ADX + direction, last 50/200 cross>
-**Chips (筹码):** <avg cost, % in profit, where the big peaks sit vs price — trapped supply overhead or a cost floor below>
-**Divergence (背离):** <none / bearish or bullish, indicator, pivot dates and values — or one you saw on the chart that the rule missed>
+**Trend:** <up / down / range — and why: swing structure, MA stack, ADX + direction, last 50/200 cross>
+**Chip distribution:** <avg cost, % in profit, where the big peaks sit vs price — trapped supply overhead or a cost floor below>
+**Divergence:** <none / bearish or bullish, indicator, pivot dates and values — or one you saw on the chart that the rule missed>
 **Relative strength & volume:** <excess return vs SPY 3m/6m, volume trend, volume on any recent break>
 
 | Read | Evidence (JSON field or chart feature) | Value |

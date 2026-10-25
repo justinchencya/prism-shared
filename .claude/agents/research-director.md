@@ -247,7 +247,7 @@ Badge rule: `[PORTFOLIO]` if the ticker is in `portfolio_tickers`, `[CANDIDATE]`
 - **Why this ticker is in this report**: One sentence — explicit tie from the run's central question to this specific company's business (e.g., "SpaceX IPO re-rates the listed-space comp set; VSAT is the public MSS-spectrum operator most directly comped against Starlink.").
 - **Thesis verdict**: Support / Weaken / Inconclusive — one line.
 - **Market verdict**: Buy / Hold / Avoid — one line. If Thesis=Support but Market≠Buy, explicitly say why (e.g., "priced in at $X for the next 12 months and still attractive on a 5-year hold given Y" → Buy; "priced for perfection that even base-case multi-year execution can't justify" → Hold/Avoid).
-- **Key levels** (from the ticker report, with the close date): add zone $A–$B · reclaim $C · break $D (破位 — no new buys below it; exit if held as a trade) · overhead $E — one line, plus the trend in a few words and a link to the chart (`tickers/chart_<TICKER>.png`).
+- **Key levels** (from the ticker report, with the close date): add zone $A–$B · reclaim $C · break $D (no new buys below it; exit if held as a trade) · overhead $E — one line, plus the trend in a few words and a link to the chart (`tickers/chart_<TICKER>.png`).
 - Load-bearing claims (what has to be true), key numbers + valuation context, falsifiers — 3–6 bullets max. $TICKER inline refs to the ticker report file.
 
 ### $TICKER2 — <verdict>

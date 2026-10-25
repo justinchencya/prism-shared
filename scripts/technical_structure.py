@@ -8,19 +8,19 @@ Usage:
   (also imported by fetch_ticker_stats.py → technicals.structure)
 
 Blocks:
-  trend        — 趋势: MA stack (20/50/100/200) and slopes, swing structure
+  trend        — MA stack (20/50/100/200) and slopes, swing structure
                  (higher highs / higher lows), ADX(14), last 50/200 cross
   macd         — MACD(12,26,9) DIF / DEA / histogram + last DIF/DEA cross
-  divergences  — 顶背离 / 底背离: price makes a higher swing high (lower swing
+  divergences  — bearish / bullish: price makes a higher swing high (lower swing
                  low) while RSI(14) or MACD DIF makes a lower high (higher low)
-  chips        — 筹码分布: turnover-decay cost distribution (the CYQ model) over
-                 ~3y — chip peaks (筹码峰), average cost, profit ratio (获利盘),
+  chips        — turnover-decay holder-cost distribution (the CYQ model) over
+                 ~3y — chip peaks, average cost, profit ratio (share of holders in profit),
                  70%/90% cost ranges
   volume_profile — 12-month volume-by-price: POC + 70% value area
   anchored_vwap  — VWAP anchored at the 52-week high and low (average cost of
                  everyone who traded since that pivot)
   levels       — clustered support / resistance with their sources, the
-                 `break_level` (破位线) and the rule for a confirmed break
+                 `break_level` and the rule for a confirmed break
   recent_breaks — key levels crossed in the last 10 sessions, with volume ratio
 
 What this can't see: who is buying or selling. yfinance has no per-trade or
@@ -121,9 +121,9 @@ def trend_block(df, close):
     if len(mas) == 4:
         chain = [last, mas[20], mas[50], mas[100], mas[200]]
         if all(a > b for a, b in zip(chain, chain[1:])):
-            out["ma_stack"] = "bullish_aligned"      # 多头排列
+            out["ma_stack"] = "bullish_aligned"      # price > 20 > 50 > 100 > 200
         elif all(a < b for a, b in zip(chain, chain[1:])):
-            out["ma_stack"] = "bearish_aligned"      # 空头排列
+            out["ma_stack"] = "bearish_aligned"      # price < 20 < 50 < 100 < 200
         else:
             out["ma_stack"] = "mixed"
 
@@ -225,7 +225,7 @@ def divergences(df, indicators):
             ind_fails = v2 < v1 if kind == "high" else v2 > v1
             if ind_fails:
                 found.append({
-                    "type": label,                       # bearish = 顶背离, bullish = 底背离
+                    "type": label,                       # bearish: price higher high, indicator lower high
                     "indicator": name,
                     "pivot_1": {"date": _date(df.index[i1]), "price": _r(p1), "value": _r(v1, 2)},
                     "pivot_2": {"date": _date(df.index[i2]), "price": _r(p2), "value": _r(v2, 2)},
@@ -234,7 +234,7 @@ def divergences(df, indicators):
     return found
 
 
-# ── chips (筹码分布) + volume profile ─────────────────────────────────────────
+# ── chip distribution + volume profile ────────────────────────────────────────
 
 def _spread(grid, lo, hi, peak):
     """Triangular weights over [lo, hi] peaking at `peak`, normalized to 1."""
@@ -304,10 +304,10 @@ def chips_block(df, float_shares):
     return {
         "model": "turnover-decay (CYQ) on daily volume / float — approximation, not holder data",
         "avg_cost": _r(float((grid * dist).sum())),
-        "profit_ratio": _r(float(dist[grid <= last].sum()), 3),   # 获利比例: share of chips in profit
+        "profit_ratio": _r(float(dist[grid <= last].sum()), 3),   # share of chips held below the current price
         "cost_range_70": [_r(r70[0]), _r(r70[1])],
         "cost_range_90": [_r(r90[0]), _r(r90[1])],
-        "concentration_70": _r((r70[1] - r70[0]) / (r70[1] + r70[0]), 3),  # lower = tighter 筹码集中
+        "concentration_70": _r((r70[1] - r70[0]) / (r70[1] + r70[0]), 3),  # lower = tighter cost clustering
         "peaks": _peaks(grid, dist, last),
     }, None
 
@@ -348,7 +348,7 @@ def anchored_vwap(df, sessions=252):
     return out
 
 
-# ── levels + 破位 ─────────────────────────────────────────────────────────────
+# ── levels + break level ──────────────────────────────────────────────────────
 
 def _cluster(raw):
     raw = sorted(raw, key=lambda x: x[0])
@@ -395,7 +395,7 @@ def levels_block(df, trend, chips, vp, avwap, atr14):
     for c in supports + resist:
         c["pct_from_price"] = _r(c["price"] / last - 1, 4)
 
-    # 破位线: the strongest-confluence support within 15% below; ties → nearest
+    # break level: the strongest-confluence support within 15% below; ties → nearest
     near = [c for c in supports if c["price"] >= last * 0.85]
     major = max(near, key=lambda c: (c["confluence"], c["price"])) if near else (supports[0] if supports else None)
     out = {"supports": supports[:5], "resistances": resist[:5], "atr14": _r(atr14),
@@ -661,7 +661,7 @@ def summarize(ticker, s):
         lc = m.get("last_cross", {})
         lines.append(f"MACD: DIF {m['dif']} DEA {m['dea']} hist {m['hist']} · last cross {lc.get('type')} {lc.get('date')}")
     for d in s.get("divergences", []):
-        tag = "顶背离 bearish" if d["type"] == "bearish" else "底背离 bullish"
+        tag = d["type"]
         lines.append(f"Divergence ({tag}, {d['indicator']}): price {d['pivot_1']['price']}→{d['pivot_2']['price']} "
                      f"vs {d['indicator']} {d['pivot_1']['value']}→{d['pivot_2']['value']} ({d['pivot_2']['date']}, "
                      f"{d['sessions_since']} sessions ago)")
@@ -679,7 +679,7 @@ def summarize(ticker, s):
             lines.append(f"{side[:-1].capitalize()}: ${c['price']} ({c['pct_from_price']:+.1%}) ×{c['confluence']} — {', '.join(c['sources'])}")
     bl = lv.get("break_level")
     if bl:
-        lines.append(f"破位 break level: ${bl['price']} ({bl['pct_from_price']:+.1%}) — {', '.join(bl['sources'])}")
+        lines.append(f"Break level: ${bl['price']} ({bl['pct_from_price']:+.1%}) — {', '.join(bl['sources'])}")
         lines.append(f"  confirmed if: {bl['confirmed_break_rule']} · ATR14 ${lv.get('atr14')}")
     for b in s.get("recent_breaks", []):
         lines.append(f"Recent: {b['direction']} {b['level']} ${b['price']} on {b['date']} (vol {b['volume_ratio_vs_50d']}× 50d)")
