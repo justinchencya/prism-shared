@@ -407,6 +407,10 @@ def build_value_series(trades: list, history: dict) -> dict:
     matching needed at this level. A ticker whose trades lack shares/price, or
     with no price history, can't be valued; it is excluded entirely (both
     lines) and reported in "excluded" so the chart can say so.
+
+    Trades are grouped by position — `position` when set (what-if swaps keep
+    their swapped-in shares apart from the real lots of the same ticker), else
+    `ticker` — and priced with `ticker`'s history.
     """
     dated = sorted((t for t in trades if t.get("date")), key=lambda t: t["date"])
     if not dated:
@@ -415,44 +419,47 @@ def build_value_series(trades: list, history: dict) -> dict:
     def complete(t):
         return bool(t.get("shares") and t.get("price_per_share"))
 
-    all_tickers = {t["ticker"] for t in dated}
+    def pos(t):
+        return t.get("position") or t["ticker"]
+
+    price_ticker = {pos(t): t["ticker"] for t in dated}
     bad = {}
     for t in dated:
         if not complete(t):
-            bad.setdefault(t["ticker"], "missing shares/price on some trades")
-    for tk in all_tickers:
-        if tk not in bad and tk not in history:
-            bad[tk] = "no price history"
-    # a ticker whose recorded sells exceed its recorded buys held shares from
+            bad.setdefault(pos(t), "missing shares/price on some trades")
+    for p, tk in price_ticker.items():
+        if p not in bad and tk not in history:
+            bad[p] = "no price history"
+    # a position whose recorded sells exceed its recorded buys held shares from
     # before the trade log began — its proceeds would fake the net-invested
     # line (return of unrecorded principal reads as P&L), so drop it whole
     running = {}
     for t in dated:
-        tk = t["ticker"]
-        if tk in bad:
+        p = pos(t)
+        if p in bad:
             continue
         sign = 1 if t["action"] in ("buy", "add") else -1
-        running[tk] = running.get(tk, 0) + sign * t["shares"]
-        if running[tk] < -1e-9:
-            bad[tk] = "sells exceed recorded buys (position predates trade log)"
-    usable = [t for t in dated if t["ticker"] not in bad]
+        running[p] = running.get(p, 0) + sign * t["shares"]
+        if running[p] < -1e-9:
+            bad[p] = "sells exceed recorded buys (position predates trade log)"
+    usable = [t for t in dated if pos(t) not in bad]
     excluded = [{"ticker": k, "reason": v} for k, v in sorted(bad.items())]
     if not usable:
         return {"series": [], "excluded": excluded}
 
     first_date = usable[0]["date"]
-    calendar = sorted({d for tk in {t["ticker"] for t in usable}
-                       for d in history[tk]})
+    held_positions = {pos(t) for t in usable}
+    calendar = sorted({d for p in held_positions for d in history[price_ticker[p]]})
     # forward-fill closes onto the union calendar (crypto trades weekends,
     # equities don't — every ticker needs a close on every calendar day)
     filled = {}
-    for tk in {t["ticker"] for t in usable}:
+    for p in held_positions:
         last = None
         col = {}
         for d in calendar:
-            last = history[tk].get(d, last)
+            last = history[price_ticker[p]].get(d, last)
             col[d] = last
-        filled[tk] = col
+        filled[p] = col
 
     series = []
     shares_held = {}
@@ -464,15 +471,15 @@ def build_value_series(trades: list, history: dict) -> dict:
         while idx < len(usable) and usable[idx]["date"] <= d:
             t = usable[idx]
             sign = 1 if t["action"] in ("buy", "add") else -1
-            shares_held[t["ticker"]] = shares_held.get(t["ticker"], 0) + sign * t["shares"]
+            shares_held[pos(t)] = shares_held.get(pos(t), 0) + sign * t["shares"]
             invested += sign * t["shares"] * t["price_per_share"]
             idx += 1
         value = 0.0
         ok = True
-        for tk, sh in shares_held.items():
+        for p, sh in shares_held.items():
             if sh <= 1e-9:
                 continue
-            close = filled[tk].get(d)
+            close = filled[p].get(d)
             if close is None:
                 ok = False  # held before its first close (pre-IPO gap) — skip day
                 break
@@ -607,19 +614,28 @@ def resolve_scenario_trades(scenario: dict, actual_trades: list, history: dict) 
             sh = frac * hyp_shares[key]
             orig_shares[key] = held - t["shares"]
             hyp_shares[key] -= sh
-        out.append({"ticker": tgt, "date": t["date"], "action": t["action"],
+        out.append({"ticker": tgt, "position": f"{tgt} (for {t['ticker']})",
+                    "date": t["date"], "action": t["action"],
                     "shares": sh, "price_per_share": close,
                     "amount_usd": round(sh * close, 2)})
     return out, warnings
 
 
-def build_whatif_series(scenarios: list, actual_trades: list, history: dict) -> list:
-    """Value series per scenario, in the shape the chart overlays expect."""
+def build_whatif_series(scenarios: list, actual_trades: list, history: dict,
+                        actual_excluded: list | None = None) -> list:
+    """Value series per scenario, in the shape the chart overlays expect.
+
+    A scenario's exclusions that the actual portfolio shares (same ticker, same
+    reason) are already reported once for the actual line, so only the
+    scenario-specific ones become warnings.
+    """
+    shared = {(e["ticker"], e["reason"]) for e in (actual_excluded or [])}
     out = []
     for sc in scenarios:
         trades, warnings = resolve_scenario_trades(sc, actual_trades, history)
         vs = build_value_series(trades, history)
-        warnings += [f"{e['ticker']}: {e['reason']}" for e in vs["excluded"]]
+        warnings += [f"{e['ticker']}: {e['reason']}" for e in vs["excluded"]
+                     if (e["ticker"], e["reason"]) not in shared]
         ci = sc.get("color_index")
         if ci is None:
             ci = len(out)
@@ -835,6 +851,16 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
 .chart-tooltip .tt-val { font-weight: 600; color: #f1f5f9;
                          font-variant-numeric: tabular-nums; }
 .muted-note { color: #64748b; font-size: 12px; padding: 8px 0; }
+.muted-note.fold summary { cursor: pointer; }
+.muted-note.fold div { margin-top: 4px; }
+.whatif-picker { display: inline-block; position: relative; margin-bottom: 10px; font-size: 12px; color: #94a3b8; }
+.whatif-picker summary { cursor: pointer; padding: 5px 10px; border: 1px solid #3d4166; border-radius: 6px; list-style: none; }
+.whatif-picker summary::after { content: ' ▾'; }
+.whatif-menu { position: absolute; z-index: 6; margin-top: 4px; background: #232842; border: 1px solid #3d4166;
+               border-radius: 6px; padding: 6px 4px; min-width: 240px; box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.whatif-menu label { display: flex; align-items: center; gap: 6px; padding: 4px 8px; cursor: pointer; color: #e2e8f0; }
+.whatif-menu label:hover { background: #2d3148; border-radius: 4px; }
+.whatif-menu .key { display: inline-block; width: 14px; height: 2px; }
 svg text { font-family: inherit; }
 .axis-tick { font-size: 10px; fill: #64748b; font-variant-numeric: tabular-nums; }
 .bar-label { font-size: 11px; fill: #e2e8f0; font-variant-numeric: tabular-nums; }
@@ -884,18 +910,62 @@ function renderPnlTab() {
 }
 
 function renderValueChart() {
+  // Default view: the actual portfolio only. What-if scenarios are opt-in via
+  // the "Compare with what-if" dropdown; each pick redraws the chart.
   const card = document.getElementById('pnl-value-card');
   const s = DATA.pnl_series.series || [];
   const excluded = DATA.pnl_series.excluded || [];
-  const hasActual = s.length >= 2;
   const scen = (DATA.whatif || []).filter(w => w.series && w.series.length >= 2);
+  const picker = scen.length ? `
+    <details class="whatif-picker">
+      <summary>Compare with what-if: <span id="whatif-picked">none</span></summary>
+      <div class="whatif-menu">${scen.map((w, k) => `<label><input type="checkbox" value="${k}">
+        <span class="key" style="background:repeating-linear-gradient(90deg,${w.color} 0 5px,transparent 5px 8px)"></span>${esc(w.name)}</label>`).join('')}</div>
+    </details>` : '';
+  // exclusions grouped by reason, folded into one line
+  const byReason = {};
+  excluded.forEach(e => { (byReason[e.reason] = byReason[e.reason] || []).push(e.ticker); });
+  const note = excluded.length ? `
+    <details class="muted-note fold"><summary>${excluded.length} ticker${excluded.length > 1 ? 's' : ''} left out of the value line</summary>
+      ${Object.entries(byReason).map(([r, ts]) => `<div><b>${esc(r)}</b>: ${ts.map(esc).join(', ')}</div>`).join('')}
+    </details>` : '';
+  card.insertAdjacentHTML('beforeend', picker + '<div id="pnl-value-body"></div>' + note);
+
+  const inputs = [...card.querySelectorAll('.whatif-menu input')];
+  const redraw = () => {
+    const chosen = inputs.filter(i => i.checked).map(i => scen[+i.value]);
+    const label = document.getElementById('whatif-picked');
+    if (label) label.textContent = chosen.length ? chosen.map(w => w.name).join(', ') : 'none';
+    drawValueChart(card, s, chosen);
+  };
+  inputs.forEach(i => i.addEventListener('change', redraw));
+  redraw();
+
+  // KPI tiles from the latest actual point
+  if (s.length < 2) return;
+  const last = s[s.length - 1];
+  const pnl = last.value - last.invested;
+  const pct = last.invested ? pnl / last.invested * 100 : null;
+  document.getElementById('kpi-value').textContent = fmtUsd(last.value);
+  document.getElementById('kpi-invested').textContent = fmtUsd(last.invested);
+  const kp = document.getElementById('kpi-pnl');
+  kp.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
+  kp.className = 'value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+  if (pct != null) {
+    const kd = document.getElementById('kpi-pnl-delta');
+    kd.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% on net invested';
+    kd.className = 'delta ' + (pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+  }
+}
+
+function drawValueChart(card, s, scen) {
+  const body = document.getElementById('pnl-value-body');
+  const hasActual = s.length >= 2;
+  // only scenario-specific warnings (shared exclusions are already in the fold below)
   const scenWarn = scen.flatMap(w => (w.warnings || []).map(m => esc(w.name) + ': ' + esc(m)));
-  let note = excluded.length
-    ? `<div class="muted-note">Excluded: ${excluded.map(e => esc(e.ticker) + ' (' + esc(e.reason) + ')').join(', ')}</div>` : '';
-  if (scenWarn.length) note += `<div class="muted-note">What-if notes: ${scenWarn.join(' · ')}</div>`;
+  const warn = scenWarn.length ? `<div class="muted-note">What-if notes: ${scenWarn.join(' · ')}</div>` : '';
   if (!hasActual && !scen.length) {
-    card.insertAdjacentHTML('beforeend',
-      '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>' + note);
+    body.innerHTML = '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>';
     return;
   }
   // x-domain: the actual portfolio's calendar; hypotheticals-only fallback
@@ -971,7 +1041,7 @@ function renderValueChart() {
     return `<div class="muted-note"><span class="key" style="background:${v.color};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:6px"></span>${esc(v.name)}: ${fmtUsd(lp.value, true)} (P&amp;L ${fmtSigned(pnl)}${vsActual})</div>`;
   }).join('');
 
-  card.insertAdjacentHTML('beforeend', `
+  body.innerHTML = (`
     <div class="chart-legend">${legend}</div>
     <svg width="${W}" height="${H}" role="img" aria-label="Portfolio value vs net invested over time, with what-if scenario overlays">
       ${grid}${xlabels}
@@ -981,7 +1051,7 @@ function renderValueChart() {
       <line id="pnl-crosshair" y1="${M.top}" y2="${M.top + ph}" stroke="#3d4166" stroke-width="1" visibility="hidden"/>
       <rect x="${M.left}" y="${M.top}" width="${pw}" height="${ph}" fill="transparent" id="pnl-hover"/>
     </svg>
-    <div class="chart-tooltip" id="pnl-tt"></div>` + summary + note);
+    <div class="chart-tooltip" id="pnl-tt"></div>` + summary + warn);
 
   const scenMaps = scenView.map(v => {
     const m = {};
@@ -989,7 +1059,7 @@ function renderValueChart() {
     return m;
   });
   const ttKey = c => `<span class="key" style="background:${c};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>`;
-  const svgEl = card.querySelector('svg');
+  const svgEl = body.querySelector('svg');
   const hover = document.getElementById('pnl-hover');
   const cross = document.getElementById('pnl-crosshair');
   const tt = document.getElementById('pnl-tt');
@@ -1023,20 +1093,6 @@ function renderValueChart() {
     cross.setAttribute('visibility', 'hidden'); tt.style.display = 'none';
   });
 
-  // KPI tiles from the latest actual point
-  if (!hasActual) return;
-  const pnl = last.value - last.invested;
-  const pct = last.invested ? pnl / last.invested * 100 : null;
-  document.getElementById('kpi-value').textContent = fmtUsd(last.value);
-  document.getElementById('kpi-invested').textContent = fmtUsd(last.invested);
-  const kp = document.getElementById('kpi-pnl');
-  kp.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
-  kp.className = 'value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-  if (pct != null) {
-    const kd = document.getElementById('kpi-pnl-delta');
-    kd.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% on net invested';
-    kd.className = 'delta ' + (pct >= 0 ? 'pnl-positive' : 'pnl-negative');
-  }
 }
 
 function renderDriversChart() {
@@ -1469,7 +1525,7 @@ def main():
     history = fetch_price_history(hist_tickers, hist_start) if hist_start else {}
 
     pnl_series = build_value_series(trades, history)
-    whatif = build_whatif_series(scenarios, trades, history)
+    whatif = build_whatif_series(scenarios, trades, history, pnl_series["excluded"])
 
     if preview:
         print_whatif_preview(whatif, pnl_series)

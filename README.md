@@ -151,7 +151,7 @@ Generates a local HTML dashboard from the tracking files. No server required —
 
 - **Timeline** — chronological interleaving of research runs, trades, and journal reflections, showing which research preceded which trade and what you were thinking along the way.
 - **Research → Trade Alignment** — every trade row linked to the research that drove it (from `trades.json`), with alignment classification (aligned / misaligned / unlinked) and lag in days between research and trade.
-- **P&L** — portfolio value vs. net invested over time, per-ticker P&L drivers, and dashed overlay lines for any active `/what-if` scenarios with per-scenario summaries.
+- **P&L** — portfolio value vs. net invested over time, and per-ticker P&L drivers. A "Compare with what-if" dropdown overlays any active `/what-if` scenarios as dashed lines, each with a summary.
 - **Per-Ticker Drilldown** — every research run that covered the ticker with its Market verdict (read straight from the reports), trade history with shares and price, and unrealized P&L vs. current price.
 
 **Requirements:** `yfinance` (for current prices and P&L). Install via `pip install yfinance` or run `bash setup.sh`.
@@ -222,7 +222,7 @@ Tracks hypothetical portfolios next to your real one on the dashboard's P&L char
 
 1. Parses your scenario into one of three types: **substitute** ("what if I'd bought AMD instead of NVDA?" — clones your trade log with the swap, same dollars on the same dates), **benchmark** ("what if the same money had just gone into SPY?"), or **standalone** (an explicit hypothetical trade list; "$500/month into QQQ since March" expands into dated trades).
 2. Appends the scenario to `hypotheticals.json` and previews it immediately (`scripts/generate_dashboard.py --whatif-preview <id>`): end value, invested, P&L — and for substitute/benchmark, the P&L delta vs your actual portfolio. Daily closes are cached per day (`tracking/price-cache.json`, gitignored) so iterating is cheap.
-3. Lands on its own branch + Pull Request. Active scenarios render as dashed overlay lines on the P&L value chart at the next dashboard regeneration; `archive` / `reactivate` / `rename` are handled by the same command in natural language.
+3. Lands on its own branch + Pull Request. Active scenarios appear in the P&L chart's "Compare with what-if" dropdown at the next dashboard regeneration; `archive` / `reactivate` / `rename` are handled by the same command in natural language.
 
 **Output** → `tracking/hypotheticals.json` (and overlay lines + per-scenario summaries in the dashboard)
 

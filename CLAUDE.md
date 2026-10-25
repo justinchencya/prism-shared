@@ -57,7 +57,7 @@ A lightweight capture command for the user's own thinking — reflections, hesit
 
 ## What-if flow
 
-Counterfactual comparison of concrete trade histories — **not** strategy backtesting (no rebalancing rules, dividends, or intraday fills; daily closes only). Scenarios live in `tracking/hypotheticals.json` (schema in `tracking/README.md`) and render as dashed overlay lines on the dashboard's P&L value chart.
+Counterfactual comparison of concrete trade histories — **not** strategy backtesting (no rebalancing rules, dividends, or intraday fills; daily closes only). Scenarios live in `tracking/hypotheticals.json` (schema in `tracking/README.md`) and can be overlaid as dashed lines on the dashboard's P&L value chart — the chart shows the actual portfolio only by default; active scenarios are picked from its "Compare with what-if" dropdown.
 
 1. **Classify** — `/what-if` takes everything after it as either a new scenario (default) or a management request (archive / reactivate / rename), detected by intent. Scenarios are matched by name substring first, then `id`.
 2. **Parse** — a new scenario becomes one of three types: `substitute` (clone the actual trade log with ticker swaps — same dollars into the swapped ticker at its close; swapped sells sell the same fraction of the hypothetical position), `benchmark` (every actual trade re-executed into one ticker, e.g. SPY), or `standalone` (explicit hypothetical trade list; DCA phrasings expanded to dated trades). Shares/prices are never stored for derived trades — `scripts/generate_dashboard.py` derives them from daily closes.
