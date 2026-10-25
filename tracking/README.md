@@ -1,215 +1,15 @@
 # Tracking
 
-Seven persistent JSON files that accumulate actionable follow-ups across all Prism research runs.
+Four persistent JSON files, each owned by one command:
 
-- **positions-thesis.json** — the **thesis overlay** for names you hold: each entry carries a `reports[]` array (thesis evolution across runs) and an `events[]` array (buy triggers, falsifiers, event monitors). Records *why* a held name is held — not shares or cost (those live in `brokerage-snapshot.json`). Presence means a thesis is on file, not the definition of "held"; a held name may have no entry, and passive holdings never get one.
-- **candidates.json** — the same overlay for tickers you're *watching* but don't hold: user-curated, same schema. You add tickers manually; research runs populate their `reports[]` and `events[]`.
-- **catalysts.json** — macro/multi-ticker events: regulatory decisions, IPOs, policy changes
 - **trades.json** — log of every individual trade execution written by `/log-trade` (see schema below)
 - **journal.json** — free-form reflections written by `/journal`: each entry carries `text` plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your own thinking (hesitations, imagined scenarios, roads not taken), surfaced in the dashboard timeline.
 - **hypotheticals.json** — what-if scenarios written by `/what-if`: counterfactual trade substitutions, standalone hypothetical portfolios, and single-ticker benchmarks, overlaid on the dashboard P&L chart (see schema below)
-- **brokerage-snapshot.json** — the real brokerage state (accounts, balances, positions, recent activity) pulled from SnapTrade by `/sync-portfolio` via `scripts/fetch_snaptrade.py` (see schema below). The **source of truth for holdings** that the thesis overlay (positions-thesis.json / candidates.json) is reconciled against; consumers judge staleness from `fetched_at`. Ships as an empty template in prism-shared — real data lives only in the private repo.
+- **brokerage-snapshot.json** — the real brokerage state (accounts, balances, positions, recent activity) pulled from SnapTrade by `/sync-portfolio` via `scripts/fetch_snaptrade.py` (see schema below). The **source of truth for holdings**; consumers judge staleness from `fetched_at`. Ships as an empty template in prism-shared — real data lives only in the private repo.
 
-(An eighth file, `price-cache.json`, may appear here — a gitignored daily-close cache written by `scripts/generate_dashboard.py`. Pure regenerable optimization, never committed.)
+(A fifth file, `price-cache.json`, may appear here — a gitignored daily-close cache written by `scripts/generate_dashboard.py`. Pure regenerable optimization, never committed.)
 
-Entries in positions-thesis.json / candidates.json / catalysts.json are created and updated automatically by the research-director (Phase 8) after each `/research` run — but only for tickers that are held (per brokerage-snapshot.json; a run on a held name without a thesis creates its positions-thesis.json entry) or already in candidates.json. Other new tickers surfaced in a run appear as `[NEW]` in the final report; you add them to candidates.json manually if you want to track them (or via `/journal` when you link a `[NEW]` ticker to a reflection).
-
-Scout and research-director derive "what's held" (`[PORTFOLIO]` tagging) from brokerage-snapshot.json, never from the thesis overlay; they read positions-thesis.json, candidates.json, and catalysts.json for thesis/event context but never write to them (research-director excepted — it writes the overlay in Phase 8). trades.json, journal.json, and hypotheticals.json are read by the dashboard only. brokerage-snapshot.json is written only by `/sync-portfolio` (which may propose thesis-overlay fixes to positions-thesis.json/candidates.json from it — trades.json is never written outside `/log-trade`).
-
----
-
-## Unified ticker entry schema
-
-Both `positions-thesis.json` positions and `candidates.json` entries share the same structure:
-
-```json
-{
-  "ticker": "NVDA",
-  "added_date": "2026-06-06", // candidates.json only; omit in positions-thesis.json
-  "reports": [
-    {
-      "run": "2026-05-29-nvda-analysis",
-      "date": "2026-05-29",
-      "hypothesis": "2-sentence falsifiable thesis from this run",
-      "entry_condition": "Buy below $130 on pullback",
-      "verdict": "Buy",
-      "horizon": "long"
-    }
-  ],
-  "events": [
-    {
-      "id": "NVDA-BUY-130",
-      "type": "buy_trigger",
-      "horizon": "long",
-      "status": "active",
-      "condition": "...",
-      "watch": "...",
-      "added": "2026-05-29",
-      "reviewed": "2026-05-29",
-      "history": [...]
-    }
-  ]
-}
-```
-
-### reports[] fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `run` | string | Research run slug (matches reports/ directory name) |
-| `date` | YYYY-MM-DD | Date the run completed |
-| `hypothesis` | string | 2-sentence falsifiable thesis from that run |
-| `entry_condition` | string \| null | Buy/add condition if verdict is Hold/Buy; null if Avoid |
-| `verdict` | string | `"Buy"` · `"Hold"` · `"Avoid"` |
-| `horizon` | string | `"long"` · `"spec"` — horizon the verdict was judged on (one per run, recorded in its `plan.md`) |
-
-Reports are appended in chronological order. Reading them in sequence shows how the thesis evolved. A ticker can carry entries of both horizons — e.g. a `long` Hold and a `spec` Buy from different runs.
-
----
-
-## Schema: positions-thesis.json
-
-```json
-{
-  "last_updated": "YYYY-MM-DD",
-  "positions": [ <TickerEntry>, ... ]
-}
-```
-
-Each position has `ticker`, `reports[]`, `events[]`. Thesis overlay — presence means a research thesis is on file for a held name, **not** the definition of "held" (that's `brokerage-snapshot.json`). No shares or cost are stored here. Prune an entry when you exit and no longer want to track the thesis.
-
----
-
-## Schema: candidates.json
-
-```json
-{
-  "last_updated": "YYYY-MM-DD",
-  "entries": [ <TickerEntry>, ... ]
-}
-```
-
-Each entry has `ticker`, `added_date`, `reports[]`, `events[]`. Snapshot — presence means actively watching. To stop watching, delete the entry. When you buy a watched name, move its entry from candidates.json into positions-thesis.json (the thesis follows the name from the watch overlay to the held overlay).
-
----
-
-## Schema: events[] entries
-
-Each object in an `events[]` array is a watchlist entry:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | ✓ | Stable ID. Format: `TICKER-TYPE_SHORT-KEYWORD`. Never changed after creation. |
-| `ticker` | string | ✓ | Uppercase symbol (e.g. `PGR`) |
-| `type` | enum | ✓ | `"buy_trigger"` · `"falsifier"` · `"event_monitor"` |
-| `horizon` | enum | ✓ | `"long"` · `"spec"` — horizon of the run that created it. Never changed after creation; only same-horizon runs update it. |
-| `status` | enum | ✓ | `"active"` · `"resolved"` · `"stale"` |
-| `condition` | string | ✓ | Full prose description of the condition being monitored |
-| `watch` | string | ✓ | What specifically to check and at what threshold |
-| `added` | YYYY-MM-DD | ✓ | Date of the source research run |
-| `reviewed` | YYYY-MM-DD | ✓ | Date last touched by any research run |
-| `stale_warning` | string | — | Added by director when entry is >18 months old without review |
-| `resolved_date` | YYYY-MM-DD | if resolved | Date the condition resolved |
-| `resolving_run` | string | if resolved | Slug of the run that resolved it |
-| `resolving_catalyst` | string | — | ID of the catalyst entry that triggered resolution (if applicable) |
-| `history` | array | ✓ | Ordered log of events (see below) |
-
-### History event types
-
-| Event type | When used | Key fields |
-|------------|-----------|------------|
-| `created` | First extraction from a research run | `from_verdict: null`, `to_verdict` |
-| `verdict_change` | A later run produces a different market verdict | `from_verdict`, `to_verdict`, `note` |
-| `updated` | A later run rechecks — verdict unchanged | `note: "Rechecked — verdict unchanged."` |
-| `status_change` | Entry moves to resolved or stale | `from_status`, `to_status`, `note` |
-
-Every history event carries: `date`, `run` (slug), `source_file`, `event`, `note`.
-
----
-
-## Schema: catalysts.json
-
-```json
-{
-  "last_updated": "YYYY-MM-DD",
-  "entries": [ <CatalystEntry>, ... ]
-}
-```
-
-### CatalystEntry fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | ✓ | Stable ID. Format: `TICKER-EVENT-YEAR` or `MACRO_KEY-YEAR-EVENT`. Never changed. |
-| `type` | enum | ✓ | `"regulatory"` · `"corporate"` · `"macro"` |
-| `status` | enum | ✓ | `"active"` · `"resolved"` · `"stale"` |
-| `tickers_affected` | string[] | ✓ | Tickers whose event entries this catalyst touches |
-| `expected_window` | string | ✓ | Plain-language time window (e.g. `"Q4 2026–Q1 2027"`) |
-| `description` | string | ✓ | What the event is, why it matters, what to watch |
-| `what_fires` | string | ✓ | Concrete action to take when this resolves |
-| `added` | YYYY-MM-DD | ✓ | Date of the source research run |
-| `reviewed` | YYYY-MM-DD | ✓ | Date last touched by any research run |
-| `resolved_date` | YYYY-MM-DD | if resolved | Date the event resolved |
-| `resolving_run` | string | if resolved | Slug of the run that captured the resolution |
-| `outcome` | string | if resolved | One sentence: what actually happened |
-| `history` | array | ✓ | Ordered log of events |
-
----
-
-## ID generation rules
-
-**Event entries** (inside `events[]`): `TICKER-TYPE_SHORT-KEYWORD` (SCREAMING-KEBAB-CASE)
-- TYPE_SHORT: `BUY` · `FAL` · `EVT`
-- KEYWORD: 1–2 words from the most specific, immutable part of the condition (metric name, event type, price level). Not the company name.
-- Examples: `PGR-BUY-180`, `CRM-FAL-CRPO`, `GOOGL-EVT-DOJ`, `AMZN-FAL-SILICON`
-
-**Catalyst entries**: `TICKER-EVENT-YEAR` or `MACRO_KEY-YEAR-EVENT`
-- Examples: `GOOGL-DOJ-2026`, `AMZN-ANTHROPIC-IPO`, `FED-RATE-2026`
-
-**Stability rule**: once written, an `id` never changes — even if `condition` or `description` prose is updated.
-
----
-
-## Update protocol: when a catalyst fires
-
-When a catalyst event resolves (e.g., Anthropic IPO prices, DOJ issues a remedy ruling):
-
-**Step 1** — run `/research` on the event. Phase 8 handles file updates automatically.
-
-**Step 2 — What Phase 8 does to catalysts.json**: sets `status: "resolved"`, adds `resolved_date`, `resolving_run`, `outcome`, appends a `status_change` history event.
-
-**Step 3 — What Phase 8 does to positions-thesis.json / candidates.json**: for each ticker in `tickers_affected`, finds active event entries and appends either a `verdict_change` (if the outcome changes the market verdict) or an `updated` event (if neutral), with `resolving_catalyst` noted in the history.
-
----
-
-## Manual lifecycle
-
-You can update entries directly in the JSON files at any time.
-
-**To resolve an event entry manually**:
-```json
-"status": "resolved",
-"resolved_date": "YYYY-MM-DD",
-"resolving_run": "manual",
-"history": [..., {
-  "date": "YYYY-MM-DD",
-  "run": "manual",
-  "source_file": null,
-  "event": "status_change",
-  "from_status": "active",
-  "to_status": "resolved",
-  "note": "<what happened>"
-}]
-```
-
-**When you buy a candidate**:
-1. Delete the entry from candidates.json
-2. Add it to positions-thesis.json, copying over the `reports[]` and `events[]` arrays (the thesis moves to the held overlay)
-
-**When you fully exit a held position**:
-1. Prune the entry from positions-thesis.json (or keep it as a closed-position record — it no longer implies "held")
-
-The director never auto-deletes or auto-resolves entries. Entries >18 months old without review get a `stale_warning` field added.
+Research runs write nothing here. A ticker's research history and verdicts live in `reports/` and are read from there (see **Tracking** in `CLAUDE.md`). Scout and research-director read brokerage-snapshot.json for `[PORTFOLIO]` tagging; trades.json, journal.json, and hypotheticals.json are read by the dashboard; trades.json is never written outside `/log-trade`.
 
 ---
 
@@ -269,10 +69,10 @@ Written by `/log-trade`. Each entry is one trade execution.
 | `run` | string | Research run slug |
 | `date` | YYYY-MM-DD | Date the research run completed |
 | `report_path` | string | Path to the ticker-level report file |
-| `market_verdict` | string \| null | Market verdict from that report (`"Buy"` / `"Hold"` / `"Avoid"`) |
+| `market_verdict` | string \| null | The run's Market verdict for this ticker when the link was made (`"Buy"` / `"Hold"` / `"Avoid"`). The dashboard uses it as stored; if null, it reads the verdict from the run's report. |
 | `linked_at` | YYYY-MM-DD | Date the link was made (may differ from trade date for retroactive linking) |
 
-**Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `positions-thesis.json` or `candidates.json` under `reports[]`.
+**Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `reports/`.
 
 ---
 
@@ -322,10 +122,6 @@ Everything is computed from daily closes — no intraday fills, dividends, or FX
 
 ---
 
-## Where the full extraction rules live
-
-- `.claude/agents/research-director.md` — Phase 8 (agent-facing rules; runs automatically after each `/research`)
-- `CLAUDE.md` — Tracking section (architecture overview and ID rule reference)
 ## Schema: brokerage-snapshot.json
 
 Written by `scripts/fetch_snaptrade.py` (invoked by `/sync-portfolio`). One whole-file snapshot per fetch — not append-only; each sync overwrites it. Requires `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` (SnapTrade Personal API key) in the env or `.env`.

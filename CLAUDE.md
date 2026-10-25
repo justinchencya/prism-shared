@@ -51,7 +51,7 @@ The agents' prompts are the rubrics; if output quality drifts, tighten the relev
 A lightweight capture command for the user's own thinking — reflections, hesitations, imagined scenarios, roads-not-taken — surfaced in the dashboard timeline for later review. No agent, no research, no Notion.
 
 1. **Sync + refine** — `/journal` syncs `main`, takes everything after `/journal` as a raw reflection (asks for it if empty), and helps the user refine it into clearer prose — preserving voice, stance, and doubt — before storing the approved text.
-2. **Link (always asked)** — suggests related research runs (keyword/ticker matches + recent runs) and tickers (tagged `[PORTFOLIO]`/`[CANDIDATE]`/`[NEW]`), and asks which to link. For a linked `[NEW]` ticker, offers to add it to `candidates.json`.
+2. **Link (always asked)** — suggests related research runs (keyword/ticker matches + recent runs) and tickers (tagged `[PORTFOLIO]`/`[NEW]`), and asks which to link.
 3. **Persist** — appends an entry (`journal-<YYYYMMDD>-<seq>`) to `tracking/journal.json` and, when `scripts/dashboard_due.py` says so at commit time, regenerates the dashboard (the entry renders as a violet node in the Timeline view).
 4. **Commit** — `/journal` commits on its own `journal/<YYYY-MM-DD>-<NNN>` branch and opens a PR (same git flow as `/scout`).
 
@@ -70,9 +70,9 @@ Pulls the **real brokerage state** via SnapTrade (Personal API key — HMAC-sign
 
 1. **Detect** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` present (env or `.env`) → sync mode; absent (e.g. a cloud sandbox without the keys) → **review-only mode**: no fetch, no writes, no git — the same review runs against the committed `tracking/brokerage-snapshot.json`, led by a staleness warning from its `fetched_at`.
 2. **Fetch** (sync mode) — `scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json` writes accounts, balances, positions, open option contracts, and lookback-window activities (stdlib-only; account numbers masked to last 4; exit 2 = creds missing → fall back to review-only).
-3. **Reconcile** — the snapshot owns "what's held"; reconcile only keeps the thesis overlay coherent with it: a bought watchlist name → move its thesis candidate → `positions-thesis.json`; a thesis left on an exited name → propose pruning it. A held name with no thesis is **not** a fix (it surfaces in the held-without-thesis review). Unlogged trades → **suggest `/log-trade`, never write `trades.json`** (it mirrors Notion 1:1). Fixes are user-approved before any write.
-4. **Review** — terse, investor-stance read of the snapshot: concentration, cash, per-position P&L, open options (share encumbrance from short calls, near/past expiries, assignment risk), held-without-thesis (→ ready-to-run `/research` questions), active `events[]` on held names, thesis staleness.
-5. **Commit** — `/sync-portfolio` commits the snapshot + approved fixes on its own `sync-portfolio/<timestamp>` branch and opens a PR. Dashboard regen considered (via `scripts/dashboard_due.py`) only if `positions-thesis.json`/`candidates.json` changed.
+3. **Check trades** (read-only) — unlogged brokerage buys/sells → **suggest `/log-trade`, never write `trades.json`** (it mirrors Notion 1:1); share-count drift vs the trade log is reported, not fixed.
+4. **Review** — terse, investor-stance read of the snapshot: concentration, cash, per-position P&L, open options (share encumbrance from short calls, near/past expiries, assignment risk), held names with no research run in `reports/` (→ ready-to-run `/research` questions), and held names whose latest research is >6 months old.
+5. **Commit** — `/sync-portfolio` commits the snapshot on its own `sync-portfolio/<timestamp>` branch and opens a PR. The snapshot isn't a dashboard input, so no regen.
 
 ## Git convention
 
@@ -100,7 +100,7 @@ Standardized branch names — `<type>/<identifier>`, all date-prefixed, all comp
 
 Both shipping options' `preview` carries the run's results plus the dashboard decision (below). Nothing is pushed or merged without the user picking a shipping option; free-text "Other" answers (e.g. "ship it but skip the dashboard") are honored as written.
 
-**The dashboard is committed, regeneration is rule-based (no prompt).** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files), `/research` (tracking + a new `final-report.md`), and `/sync-portfolio` (only when a reconciliation fix touches `positions-thesis.json`/`candidates.json`; the snapshot itself is not a dashboard input) — decides regeneration with `python3 scripts/dashboard_due.py` instead of asking. It prints `regenerate: …` (exit 0) only when **now is a NYSE trading day after that day's close (13:00 PT; 10:00 PT on early-close days) and no commit on `main` has touched `dashboard/index.html` since that close** — i.e. once per trading day, on closing prices; otherwise `skip: …` (exit 1). The generator fetches live prices via yfinance (slow), so this keeps it to one regen per close. The command runs the check before the ship gate and states its one-line decision in the gate's preview; if the user ships, it runs `python3 scripts/generate_dashboard.py` on `regenerate` (or when the user's invocation/answer explicitly asks for a regen) and stages `dashboard/index.html` **with the run**; on `skip` the committed dashboard is left as-is. A regen error is reported but never blocks the commit. `/scout` and `/podcast` touch no dashboard input, so they neither check nor regenerate.
+**The dashboard is committed, regeneration is rule-based (no prompt).** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files) and `/research` (a new `final-report.md`) — decides regeneration with `python3 scripts/dashboard_due.py` instead of asking. It prints `regenerate: …` (exit 0) only when **now is a NYSE trading day after that day's close (13:00 PT; 10:00 PT on early-close days) and no commit on `main` has touched `dashboard/index.html` since that close** — i.e. once per trading day, on closing prices; otherwise `skip: …` (exit 1). The generator fetches live prices via yfinance (slow), so this keeps it to one regen per close. The command runs the check before the ship gate and states its one-line decision in the gate's preview; if the user ships, it runs `python3 scripts/generate_dashboard.py` on `regenerate` (or when the user's invocation/answer explicitly asks for a regen) and stages `dashboard/index.html` **with the run**; on `skip` the committed dashboard is left as-is. A regen error is reported but never blocks the commit. `/scout`, `/podcast`, and `/sync-portfolio` touch no dashboard input (the brokerage snapshot isn't one), so they neither check nor regenerate.
 
 Canonical procedure (each command substitutes branch / paths / title):
 
@@ -177,77 +177,37 @@ reports/
       episode.mp3
       episode.json
 tracking/
-  positions-thesis.json        # thesis overlay for held names: reports[] + events[] per ticker (holdings truth lives in brokerage-snapshot.json)
-  candidates.json              # user-curated watchlist with reports[] + events[] per ticker
-  catalysts.json               # macro/multi-ticker events
   trades.json                  # individual trade log written by /log-trade
   journal.json                 # free-form reflections written by /journal
   hypotheticals.json           # what-if scenarios written by /what-if
   brokerage-snapshot.json      # real brokerage state fetched from SnapTrade by /sync-portfolio
 dashboard/
-  index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / what-if / research / sync-portfolio) when scripts/dashboard_due.py says it's due (once per trading day, after the 13:00 PT close)
+  index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / what-if / research) when scripts/dashboard_due.py says it's due (once per trading day, after the 13:00 PT close)
 ```
 
 Cast voices live in `.claude/podcast-cast.json` (created on first `/podcast` run, reused after). Helper at `scripts/tts_synthesize.py` does the OpenAI HTTP calls. The scout's curated X follow list lives in `.claude/scout-x-feeds.json` (hand-edited; `handles[]` with optional `topics`/`note`).
 
 ## Tracking
 
-Seven persistent JSON files accumulate across all research runs. They live in `tracking/` and are committed alongside each research/trade/journal/what-if/sync-portfolio PR (via `git add tracking/`).
+Four persistent JSON files live in `tracking/` and are committed with the trade/journal/what-if/sync-portfolio PR that changes them.
 
 ```
 tracking/
-  positions-thesis.json   # thesis overlay for held names: reports[] + events[] per ticker (why held / what to watch — NOT shares/cost)
-  candidates.json    # user-curated watchlist: tickers under consideration, same schema
-  catalysts.json     # macro/multi-ticker: regulatory events, IPOs, policy decisions
   trades.json        # individual trade log: every /log-trade execution with linked research
   journal.json       # free-form reflections: every /journal entry with linked runs/tickers
   hypotheticals.json # what-if scenarios: substitutions / standalone portfolios / benchmarks
   brokerage-snapshot.json # real brokerage state (accounts/positions/options/activity) from SnapTrade via /sync-portfolio — source of truth for holdings
 ```
 
-**Holdings vs. thesis — the overlay model.** `brokerage-snapshot.json` is the **source of truth for what's held** (positions, shares, cost, cash, P&L). `positions-thesis.json` is a **thesis overlay** on top of it: `reports[]`/`events[]` capturing *why* each held name is held and *what would break the thesis* — it carries no shares or cost and does not, on its own, define "held." `candidates.json` is the same overlay for names you're *watching* but don't hold. So a held name can legitimately have no thesis entry (it surfaces in `/sync-portfolio`'s held-without-thesis review, not as a defect), and passive/no-thesis holdings (index funds, cash sweep) live only in the snapshot, never in the overlay.
+**Research lives in `reports/`, not in tracking.** There is no per-ticker thesis store, watchlist, or event tracker. Anything that needs a ticker's research history (the dashboard, `/log-trade` and `/journal` run suggestions, `/sync-portfolio`'s held-without-research and stale-research checks) reads it from the reports themselves: a run covered a ticker if `tickers/<TICKER>.md` exists or its `final-report.md` mentions `$<TICKER>`, and its Market verdict comes from the verdict table (or the `### $TICKER — <verdict>` heading, or the ticker file's `**Market verdict:**` line). `brokerage-snapshot.json` is the **source of truth for what's held** (positions, shares, cost, cash, P&L); `[PORTFOLIO]` badges everywhere come from the `symbol` values across its `accounts[].positions[]`.
 
 (`tracking/price-cache.json` may also exist — a gitignored daily-close cache written by `scripts/generate_dashboard.py`, refetched whole per ticker per day. Never committed.)
 
-**What feeds in**: research-director (Phase 8) appends `reports` and `events` entries to `positions-thesis.json` (for held tickers — creating the entry if the held name had no thesis yet) and `candidates.json` (for candidates) after each run. New tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`. `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Notion's `Amount` is **signed**: positive for `buy`/`add`, negative for `sell`/`trim`, since the log tracks net money invested; `Action` also carries the direction). `trades.json` mirrors the Notion log 1:1 **except** that its `amount_usd` is the unsigned positive magnitude (direction lives in the `action` field, which `scripts/generate_dashboard.py` relies on for the sign) — only Notion's `Amount` column carries the sign. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) and may add a `[NEW]` linked ticker to `candidates.json` on request — it does not touch Notion. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. `/sync-portfolio` overwrites `brokerage-snapshot.json` with the fetched brokerage state (the holdings source of truth) and, with per-fix user approval, reconciles the thesis overlay against it — moving a bought watchlist name's thesis candidate → positions-thesis, and pruning a thesis left on an exited name. It does **not** stub bare holdings into the overlay (a held name with no thesis is fine) and never writes `trades.json` (owned by `/log-trade`, mirrors Notion 1:1). Podcast and scout do not write to any tracking files.
+**What feeds in**: `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade, each with the run's `market_verdict` for that ticker at link time) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Notion's `Amount` is **signed**: positive for `buy`/`add`, negative for `sell`/`trim`, since the log tracks net money invested; `Action` also carries the direction). `trades.json` mirrors the Notion log 1:1 **except** that its `amount_usd` is the unsigned positive magnitude (direction lives in the `action` field, which `scripts/generate_dashboard.py` relies on for the sign) — only Notion's `Amount` column carries the sign. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) — it does not touch Notion. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. `/sync-portfolio` overwrites `brokerage-snapshot.json` with the fetched brokerage state and never writes `trades.json` (owned by `/log-trade`, mirrors Notion 1:1). Research, podcast, and scout write no tracking files.
 
-**What consumes them**: scout (Phase 3) and research-director (Phase 0) derive the `[PORTFOLIO]` set from `brokerage-snapshot.json` (the holdings truth — `symbol` values across `accounts[].positions[]`) and the `[CANDIDATE]` set from `candidates.json`; `/journal` tags the same way. Scout additionally reads `positions-thesis.json`, `candidates.json`, and `catalysts.json` for active event entries to surface watchlist alerts — never for the holdings set. `scripts/generate_dashboard.py` reads `positions-thesis.json`, `candidates.json`, `trades.json`, `journal.json`, and `hypotheticals.json` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L, and what-if scenario overlays on the P&L value chart). `/sync-portfolio` reads `brokerage-snapshot.json` (its review-only fallback when SnapTrade credentials are absent) plus `positions-thesis.json`, `candidates.json`, and `trades.json` for reconciliation.
+**What consumes them**: scout and research-director read `brokerage-snapshot.json` for the `[PORTFOLIO]` set; `/journal` tags the same way. `scripts/generate_dashboard.py` reads `trades.json`, `journal.json`, and `hypotheticals.json` plus `reports/` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L and research history, and what-if scenario overlays on the P&L value chart) — a trade link's stored `market_verdict` wins, else the verdict is read from the linked run's report. `/sync-portfolio` reads `brokerage-snapshot.json` (its review-only fallback when SnapTrade credentials are absent) plus `trades.json` and `reports/`.
 
 **journal.json structure**: `{ last_updated, entries: [{ id, date, text, linked_research: [{ run, date, report_path, linked_at }], linked_tickers: [<symbol>] }] }`. Append-only log — entries are not snapshots and are never auto-pruned. Entry `id` is `journal-<YYYYMMDD>-<seq>` (per-day sequence, mirrors the `trades.json` id scheme).
-
-**positions-thesis.json structure**: `{ positions: [{ ticker, reports: [], events: [] }] }`. Thesis overlay — presence means a research thesis is on file for a held name, **not** the definition of "held" (that's the brokerage snapshot). Entries appear when research-director runs on a name or a candidate is promoted on purchase; they carry no shares or cost. Prune an entry when you exit and no longer want to track its thesis. Research runs append to `reports[]` and `events[]` automatically.
-
-**candidates.json structure**: `{ entries: [{ ticker, added_date, reports: [], events: [] }] }`. Snapshot — presence means actively watching. To stop watching, delete the entry. When a watched name is bought, move its entry to `positions-thesis.json`. Research runs append to `reports[]` and `events[]`.
-
-**reports[] entry** (inside each ticker): `{ run, date, hypothesis, entry_condition, verdict, horizon }` — one entry per research run that touched that ticker.
-
-**Horizon**: every `reports[]` and `events[]` entry carries `horizon` (`long` · `spec`) — the horizon of the run that wrote it (one per run, recorded in `plan.md`). Verdict and horizon are independent dimensions, so a ticker can carry a `long` Hold and a `spec` Buy at the same time. An event's `horizon` is fixed at creation, like its `id`, and only runs of the same horizon update it.
-
-### Event entry ID format (SCREAMING-KEBAB-CASE, deterministic)
-
-**Ticker-level events** (inside positions-thesis.json and candidates.json `events[]` arrays): `<TICKER>-<TYPE_SHORT>-<KEYWORD>`
-- TYPE_SHORT: `BUY` (buy_trigger) · `FAL` (falsifier) · `EVT` (event_monitor)
-- KEYWORD: 1–2 words from the most specific, immutable part of the condition — the metric name, event type, or price level. Not the company name. Not a generic word.
-- Examples: `PGR-BUY-180`, `CRM-FAL-CRPO`, `GOOGL-EVT-DOJ`, `AMZN-FAL-SILICON`
-
-**Catalyst entries**: `<MACRO_KEY>-<YEAR>-<EVENT>` or `<TICKER>-<EVENT>-<YEAR>`
-- Examples: `GOOGL-DOJ-2026`, `AMZN-ANTHROPIC-IPO`, `FED-RATE-2026`
-
-**Stability rule**: once an `id` is written, never change it. Match existing entries by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. Update in place; never duplicate.
-
-### History tracking
-
-Every event entry carries a `history` array. Each element records one event:
-- `created` — initial extraction
-- `verdict_change` — a later research run produced a different verdict on the same condition
-- `updated` — rechecked by a later run, verdict unchanged
-- `status_change` — active → resolved or stale
-
-### Manual lifecycle
-
-- **Resolved**: change `status` to `"resolved"`, add `resolved_date` + `resolving_run` to the entry, note what happened.
-- **Stale**: change `status` to `"stale"` and note why (condition expired, no longer relevant).
-- The director flags entries >18 months old with a `stale_warning` field but never auto-deletes or auto-resolves.
 
 ## Investor stance
 

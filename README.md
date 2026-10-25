@@ -152,9 +152,7 @@ Generates a local HTML dashboard from the tracking files. No server required —
 - **Timeline** — chronological interleaving of research runs, trades, and journal reflections, showing which research preceded which trade and what you were thinking along the way.
 - **Research → Trade Alignment** — every trade row linked to the research that drove it (from `trades.json`), with alignment classification (aligned / misaligned / unlinked) and lag in days between research and trade.
 - **P&L** — portfolio value vs. net invested over time, per-ticker P&L drivers, and dashed overlay lines for any active `/what-if` scenarios with per-scenario summaries.
-- **Per-Ticker Drilldown** — full research history for a ticker (all runs that covered it, with thesis evolution and verdicts), trade history with shares and price, unrealized P&L vs. current price, and all active buy triggers / falsifiers / event monitors, newest first.
-
-Every research run and verdict, in every view, carries a horizon chip — `long` or `spec` — so long-term and speculative calls stay distinguishable.
+- **Per-Ticker Drilldown** — every research run that covered the ticker with its Market verdict (read straight from the reports), trade history with shares and price, and unrealized P&L vs. current price.
 
 **Requirements:** `yfinance` (for current prices and P&L). Install via `pip install yfinance` or run `bash setup.sh`.
 
@@ -172,7 +170,7 @@ Logs an investment action to the Notion Investment Log database, links it to the
 
 1. Parses your natural-language description into trade fields — ticker, amount, action (`buy`/`add`/`trim`/`sell`), and optional shares, price, and comment.
 2. Finds research runs that covered the ticker and asks which informed the trade, then inserts the row into the Notion Investment Log database with the research linked as a hyperlink in the Comment.
-3. Updates the tracking layer: `trades.json` always; the thesis overlay (`positions-thesis.json` / `candidates.json`) only to *move an existing thesis* when a watched name is bought (candidate → positions-thesis) or prune one when a held name is fully exited — a bought name with no thesis gets no stub (holdings live in the brokerage snapshot). Regenerates the dashboard automatically when due — once per trading day, after the 1 pm PT close (`scripts/dashboard_due.py`).
+3. Records the trade in `trades.json`, with each linked run's verdict at the time. Regenerates the dashboard automatically when due — once per trading day, after the 1 pm PT close (`scripts/dashboard_due.py`).
 4. Lands on its own branch + Pull Request, same as every other command.
 
 **Requirements:** a Notion integration token in `NOTION_TOKEN` (the MCP server wired in `.mcp.json` reads it from `.env`), with your Investment Log database shared to that integration. Optionally pin the database via `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` / `NOTION_INVESTMENT_LOG_DATABASE_ID` (otherwise it's resolved by name). Without Notion configured, `/log-trade` still records every trade locally in `trades.json`. See the **Setup** section and `.env.example`.
@@ -198,7 +196,7 @@ Captures a free-form reflection — a hesitation, an imagined scenario, a road n
 **How it works:**
 
 1. Takes your raw reflection and helps refine it into clearer prose — keeping your voice, stance, and doubts — before saving the version you approve.
-2. Always asks which research runs and tickers to link, suggesting matches from the text (recent runs, and tickers tagged `[PORTFOLIO]` / `[CANDIDATE]` / `[NEW]`). A linked `[NEW]` ticker can be added to `candidates.json` on the spot.
+2. Always asks which research runs and tickers to link, suggesting matches from the text (recent runs, and tickers tagged `[PORTFOLIO]` / `[NEW]`).
 3. Appends the entry to `journal.json`, regenerates the dashboard when due (the entry shows as a violet node in the Timeline), and lands on its own branch + Pull Request.
 
 **Output** → `tracking/journal.json` (and a timeline node in the dashboard)
@@ -245,16 +243,16 @@ Tracks hypothetical portfolios next to your real one on the dashboard's P&L char
 /sync-portfolio [focus]
 ```
 
-Pulls your **real brokerage state** — accounts, balances, positions, recent activity — via [SnapTrade](https://snaptrade.com) (Personal API key, read-only for Fidelity), reconciles it against Prism's tracking, and reviews the portfolio. The brokerage snapshot is the **source of truth for holdings**; Prism's `positions-thesis.json` is a **thesis overlay** on top of it (why each held name is held) and `trades.json` is the research-linked trade log — this command refreshes the holdings truth and keeps the overlay coherent with it.
+Pulls your **real brokerage state** — accounts, balances, positions, recent activity — via [SnapTrade](https://snaptrade.com) (Personal API key, read-only for Fidelity), checks it against the trade log, and reviews the portfolio. The brokerage snapshot is the **source of truth for holdings**; `trades.json` is the research-linked trade log.
 
 **How it works:**
 
 1. **Capability check** — if `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are set (env or `.env`), it fetches live via `scripts/fetch_snaptrade.py` into `tracking/brokerage-snapshot.json`. If not (say, a cloud sandbox without the keys), it degrades to a **review-only** pass over the last committed snapshot, led by a staleness warning — no writes, no git.
-2. **Reconcile** — the snapshot owns "what's held"; reconcile only keeps the thesis overlay coherent: a bought watchlist name → move its thesis candidate → `positions-thesis.json`; a thesis left on an exited name → offer to prune it. A held name with no thesis is fine (it shows up in the review, not as a fix). Brokerage trades missing from `trades.json` are suggested as `/log-trade` backfills — never auto-written, since `trades.json` mirrors Notion 1:1. Every fix is user-approved before any write.
-3. **Review** — concentration, cash, per-position P&L, names held without a research thesis on file (listed as ready-to-run `/research` questions), active buy-triggers/falsifiers on held names, and stale theses. An optional focus hint (`/sync-portfolio concentration`) weights the review.
+2. **Check trades** — brokerage trades missing from `trades.json` are suggested as `/log-trade` backfills — never auto-written, since `trades.json` mirrors Notion 1:1.
+3. **Review** — concentration, cash, per-position P&L, open options, held names with no research run in `reports/` (listed as ready-to-run `/research` questions), and held names whose latest research is over 6 months old. An optional focus hint (`/sync-portfolio concentration`) weights the review.
 4. Lands on its own branch + Pull Request, same flow as every other command.
 
-**Output** → `tracking/brokerage-snapshot.json` (+ approved fixes to `positions-thesis.json` / `candidates.json`)
+**Output** → `tracking/brokerage-snapshot.json`
 
 **Requirements:** a free SnapTrade account with a **Personal API key** and your brokerage connected once via their Connection Portal (browser, one-time), then `SNAPTRADE_CLIENT_ID` / `SNAPTRADE_CONSUMER_KEY` in `.env`. Setup steps in `.env.example`. The consumerKey has full read access to your connected brokerage — treat it like a password.
 
@@ -263,7 +261,7 @@ Pulls your **real brokerage state** — accounts, balances, positions, recent ac
 ```
 /sync-portfolio
 /sync-portfolio concentration
-/sync-portfolio just the reconciliation
+/sync-portfolio just the options
 ```
 
 ---
@@ -274,25 +272,13 @@ The seven commands are independent — none assumes another ran first. You can c
 
 ## Tracking
 
-Research runs accumulate a persistent tracking layer across seven JSON files in `tracking/`:
+Four JSON files in `tracking/`:
 
-- **`positions-thesis.json`** — the **thesis overlay** for names you hold: each entry carries a `reports[]` array (how the thesis evolved across runs) and an `events[]` array (buy triggers, falsifiers, event monitors to watch). It records *why* a held name is held — not shares or cost, which live in `brokerage-snapshot.json`. A held name can have no entry here (no thesis on file yet); passive holdings never get one.
-- **`candidates.json`** — the same overlay for tickers you're *watching* but don't hold: user-curated, same schema. You add tickers manually; research runs populate their `reports[]` and `events[]` for active entries.
-- **`catalysts.json`** — system-level events with expected dates: regulatory decisions, IPOs, macro policy changes
-- **`trades.json`** — log of every individual trade execution: date, ticker, action, amount, shares, price per share, and a `linked_research[]` array pointing to the specific research runs that motivated the trade. Written by `/log-trade`; read by the dashboard for alignment analysis and P&L.
+- **`trades.json`** — log of every individual trade execution: date, ticker, action, amount, shares, price per share, and a `linked_research[]` array pointing to the research runs that motivated the trade (with each run's verdict at the time). Written by `/log-trade`; read by the dashboard for alignment analysis and P&L.
 - **`journal.json`** — free-form reflections from `/journal`: text plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your thinking — hesitations, imagined scenarios, roads not taken — read by the dashboard for the timeline.
 - **`hypotheticals.json`** — what-if scenarios from `/what-if`: trade substitutions, standalone hypothetical portfolios, and benchmarks, read by the dashboard for the P&L chart overlays.
-- **`brokerage-snapshot.json`** — the real brokerage state (accounts, balances, positions, recent activity) fetched from SnapTrade by `/sync-portfolio`; the **source of truth for holdings** that the thesis overlay is reconciled against.
+- **`brokerage-snapshot.json`** — the real brokerage state (accounts, balances, positions, options, recent activity) fetched from SnapTrade by `/sync-portfolio`; the **source of truth for holdings** and for every `[PORTFOLIO]` badge.
 
-**How it feeds:**
+Research itself lives only in `reports/` — there's no separate thesis store, watchlist, or event tracker to keep in sync. Anything that needs a ticker's research history (the dashboard, `/log-trade`, `/journal`, `/sync-portfolio`) reads the reports directly.
 
-- Every `/research` run appends to these files (Phase 8 of the director). For held tickers (per `brokerage-snapshot.json`) and tickers in `candidates.json`: the run adds a `reports[]` entry (thesis, entry condition, verdict, horizon) and updates `events[]` (buy triggers, falsifiers, event monitors) — creating a `positions-thesis.json` entry when a held name gets its first thesis. Other new tickers (`[NEW]`) are not auto-written — at the end of the run the director lists them and asks which to add to `candidates.json`.
-- Each event entry carries a `history` array — verdict changes, rechecks, and resolutions are logged with timestamps and source files.
-
-**How it closes the loop:**
-
-- Every `/scout` run reads the holdings (`brokerage-snapshot.json`), the thesis overlay, `candidates.json`, and `catalysts.json`. Signals about held tickers surface as **Portfolio signals**; signals matching active event entries surface as **Watchlist alerts**; everything else is **New candidates** — all in separate brief sections.
-- The final report tags each ticker block as `[PORTFOLIO]`, `[CANDIDATE]`, or `[NEW]` so the framing is always relative to your actual holdings.
-- When a catalyst fires, a `/research` run on the event resolves the catalyst entry and propagates history events to all affected ticker entries.
-
-See `tracking/README.md` for the full schema, ID generation rule, resolution protocol, and manual lifecycle instructions.
+See `tracking/README.md` for the file schemas.

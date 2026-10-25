@@ -1,5 +1,5 @@
 ---
-description: Log an investment action to the Notion Investment Log database. Inserts a new row with date, ticker, action, amount, shares, price, and optional comment. Moves an existing thesis between tracking/candidates.json and tracking/positions-thesis.json when a watched name is bought or a held name is fully exited (it never writes a bare holding stub — holdings live in the brokerage snapshot). Links the trade to related research runs, writes the link as a hyperlink to the Notion Comment field, and records everything in tracking/trades.json.
+description: Log an investment action to the Notion Investment Log database. Inserts a new row with date, ticker, action, amount, shares, price, and optional comment. Links the trade to related research runs, writes the link as a hyperlink to the Notion Comment field, and records everything in tracking/trades.json.
 ---
 
 Log a new row to the **Investment Log** Notion database, then update the local tracking files and link to related research.
@@ -14,7 +14,7 @@ The Investment Log identifiers are read from the environment so the engine carri
 **Resolution / graceful degradation**, in order:
 1. If `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` is set, use it.
 2. If it is unset but `NOTION_TOKEN` is configured, resolve the data source by searching Notion for one named "Investment Log" and use that.
-3. If neither resolves (no env ID, no token, or the search finds nothing), **Notion is unconfigured** — skip the Notion insert in Step 5 entirely, record the trade in the local tracking files only (Steps 7–8) with `notion_page_id`/`notion_url` set to `null`, and note in the final reply that Notion mirroring was skipped. Never abort the trade log over a missing Notion config.
+3. If neither resolves (no env ID, no token, or the search finds nothing), **Notion is unconfigured** — skip the Notion insert in Step 5 entirely, record the trade in `tracking/trades.json` only (Step 7) with `notion_page_id`/`notion_url` set to `null`, and note in the final reply that Notion mirroring was skipped. Never abort the trade log over a missing Notion config.
 
 - **Schema**:
   - `Ticker` — title (required)
@@ -59,9 +59,9 @@ The Investment Log identifiers are read from the environment so the engine carri
 4. **Link to research** — find research runs that covered this ticker and ask the user to select which informed this trade. Do this before inserting to Notion so the link can be included in a single write.
 
    **Finding relevant runs**:
-   - Read `tracking/positions-thesis.json` and `tracking/candidates.json`. If the ticker entry exists, its `reports[]` array lists past research runs with `run`, `date`, and `verdict` fields — use these as the primary source.
-   - Additionally scan `reports/` directories: for each subdirectory, check if `reports/<run-dir>/tickers/<TICKER>.md` exists. This catches tickers researched (e.g. with an Avoid verdict) that were never added to the thesis overlay or candidates.
-   - Deduplicate (positions-thesis.json and the file scan may overlap). Sort by date descending. Cap at 10 most recent.
+   - Scan `reports/` for runs that covered the ticker: `reports/<run-dir>/tickers/<TICKER>.md` exists, or `reports/<run-dir>/final-report.md` mentions `$<TICKER>`.
+   - Read each run's Market verdict for the ticker from its final report's verdict table (or its `### $TICKER — <verdict>` heading), falling back to the `**Market verdict:**` line in `tickers/<TICKER>.md` / `ticker-scan.md`.
+   - Deduplicate. Sort by date descending. Cap at 10 most recent.
 
    **If no runs found**:
    Display: `"No research runs found for [TICKER]."`
@@ -77,7 +77,7 @@ The Investment Log identifiers are read from the environment so the engine carri
      3. 2026-05-31 | mobile-agentic-cloud-stack          | verdict: Hold
    Link to research (e.g. "1,3"), "all", or "none":
    ```
-   - `verdict` comes from the `reports[]` entry in positions-thesis.json/candidates.json. For runs found only via file scan (not in tracking), show `verdict: (untracked)`.
+   - If a run's report gives no clear verdict for the ticker (e.g. mentioned only in passing), show `verdict: (none)`.
    - If more than 10 runs exist, note `"...and N older runs (enter 'all' to include all)"`.
 
    **Parse the response**:
@@ -91,7 +91,7 @@ The Investment Log identifiers are read from the environment so the engine carri
      "run": "<run-dir-name e.g. 2026-06-07-ai-semi-dip-fed-spacex>",
      "date": "<YYYY-MM-DD>",
      "report_path": "reports/<run-dir>/tickers/<TICKER>.md",  // ticker symbol exactly as given, preserving hyphens (e.g. BRK-B.md)
-     "market_verdict": "<verdict from reports[] or null if untracked>",
+     "market_verdict": "<the run's Market verdict for this ticker, or null if none>",
      "linked_at": "<today YYYY-MM-DD>"
    }
    ```
@@ -125,24 +125,7 @@ The Investment Log identifiers are read from the environment so the engine carri
 
 6. **Confirm success** — reply with the Notion page URL.
 
-7. **Update the thesis overlay** — `tracking/positions-thesis.json` is the thesis overlay (held names' `reports[]`/`events[]`), **not** a holdings ledger — the actual holding is captured by the next `/sync-portfolio` snapshot, so a buy never needs a bare membership stub. Only *move an existing thesis* when one exists. Read `tracking/positions-thesis.json` and `tracking/candidates.json`, then apply based on `action_type`:
-
-   **If `action_type` is `"buy"` or `"add"`** (initiating or adding to a position):
-   - Check if ticker already has an entry in `positions-thesis.json`.
-   - **If not in positions-thesis**: check if it exists in `candidates.json`.
-     - If in candidates: remove the entry from `candidates.json`; add it to `positions-thesis.json` copying over the candidate's `reports[]` and `events[]` arrays (a real thesis moves from the watch overlay to the held overlay). Report: "Moved [TICKER] thesis from candidates → positions-thesis."
-     - If not in candidates: **do not create an entry** — there's no thesis yet, and an empty stub is exactly what the overlay design drops. Report: "Logged [TICKER] buy — no thesis on file; run /research to build one (it'll also surface in /sync-portfolio's held-without-thesis review)."
-   - **If already in positions-thesis**: no change needed. Report: "Added to existing [TICKER] position (thesis on file)."
-
-   **If `action_type` is `"sell"`** (full exit — use only when completely exiting):
-   - If the ticker has a `positions-thesis.json` entry, offer to prune it (its thesis is now on an exited name) or keep it as a closed-position record. Report the choice made.
-   - If not found in positions-thesis, report it and skip.
-
-   **If `action_type` is `"trim"`**: no overlay changes needed — partial sales don't change thesis coverage.
-
-   Always update `last_updated` on any file modified.
-
-8. **Write to `tracking/trades.json`** — persist the trade record with research linkage.
+7. **Write to `tracking/trades.json`** — persist the trade record with research linkage.
 
    If `tracking/trades.json` does not exist, initialize it as:
    ```json
@@ -172,9 +155,9 @@ The Investment Log identifiers are read from the environment so the engine carri
 
    Update `last_updated` to today. Write the file. Report: `"Logged to tracking/trades.json (ID: trade-AVGO-20260607-001)."`
 
-9. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet.
+8. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet.
 
-10. **Ship gate** — the work is already on the `log-trade/<date>-<slug>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/trades.json`, plus `tracking/positions-thesis.json` and/or `tracking/candidates.json` if Step 7 moved a thesis) and the dashboard decision line.
+9. **Ship gate** — the work is already on the `log-trade/<date>-<slug>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/trades.json`) and the dashboard decision line.
 
     Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this trade log?", and three options in this order:
     - "Ship it — commit, push, open PR, merge" (Recommended)
@@ -188,7 +171,7 @@ The Investment Log identifiers are read from the environment so the engine carri
     Stage, commit, push, open the PR (the branch already exists). Include `dashboard/index.html` **only if it was regenerated**:
     ```bash
     cd <repo-root>
-    git add tracking/trades.json   # + dashboard/index.html if regenerated; + tracking/positions-thesis.json and/or tracking/candidates.json if modified in Step 7
+    git add tracking/trades.json   # + dashboard/index.html if regenerated
     git commit -m "log-trade: <ticker> <action> <date> (<id>)"
     git push -u origin log-trade/<date>-<slug>
     gh pr create --base main --head log-trade/<date>-<slug> --title "log-trade: <ticker> <action> <date>" --body "<one line: ticker, action, amount, linked runs>"
@@ -205,7 +188,7 @@ The Investment Log identifiers are read from the environment so the engine carri
 
 - If `ticker` is missing: ask for it before proceeding.
 - If `amount` is missing: ask for it before proceeding.
-- If `action_type` is ambiguous: default to `"buy"`, apply no tracking change and note the ambiguity.
+- If `action_type` is ambiguous: default to `"buy"` and note the ambiguity.
 - If `date` is ambiguous: default to today.
 
 ## Examples
@@ -214,22 +197,21 @@ The Investment Log identifiers are read from the environment so the engine carri
 → Parse: ticker=NVDA, action=buy, amount=2700, price_per_share=135, shares=20
 → Research linking prompt shown; user picks a run
 → Notion row inserted with Comment="Research" hyperlinked to the run; trades.json appended
-→ NVDA already in portfolio — no tracking change
 
 `/log-trade initiated PGR $3600`
 → Parse: ticker=PGR, action=buy, amount=3600
 → Research linking prompt shown; user picks or skips
 → Notion row inserted (with or without Comment depending on selection)
-→ PGR found in candidates.json → moved to portfolio; trades.json appended
+→ trades.json appended
 
 `/log-trade sold all VSAT $3200`
 → Parse: ticker=VSAT, action=sell, amount=3200
 → Research linking prompt shown (exits can also be linked)
-→ Notion row inserted with Action=sell, Amount=-3200 (negative — cash back); VSAT's thesis in positions-thesis.json offered for pruning (exited name); trades.json appended with amount_usd=3200 (unsigned magnitude)
+→ Notion row inserted with Action=sell, Amount=-3200 (negative — cash back); trades.json appended with amount_usd=3200 (unsigned magnitude)
 
 `/log-trade May 30 — trimmed CRM $500`
 → Parse: ticker=CRM, action=trim, amount=500, date=2026-05-30
-→ Research linking prompt shown; trim: no portfolio tracking change; Notion Action=trim, Amount=-500 (negative — partial cash back); trades.json amount_usd=500 (unsigned magnitude)
+→ Research linking prompt shown; trim: Notion Action=trim, Amount=-500 (negative — partial cash back); trades.json amount_usd=500 (unsigned magnitude)
 
 `/log-trade bought AVGO at $385, $3850 total`
 → Parse: ticker=AVGO, action=buy, amount=3850, price_per_share=385, shares=10

@@ -1,15 +1,15 @@
 ---
-description: Pull the live brokerage state (accounts, balances, positions, open option contracts, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, reconcile it against positions-thesis.json / candidates.json / trades.json, and review the portfolio (concentration, cash, P&L, held-without-thesis, active falsifiers). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
+description: Pull the live brokerage state (accounts, balances, positions, open option contracts, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, check it against trades.json, and review the portfolio (concentration, cash, P&L, options, held names with no or stale research). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
 ---
 
-Sync the user's **actual brokerage state** into Prism and review it. The brokerage snapshot is the **source of truth for holdings** — what is really held, how much, at what cost. Layered over it: `tracking/positions-thesis.json` is the **thesis overlay** (why each held name is held — `reports[]`/`events[]`, no shares or cost), `tracking/candidates.json` is the same overlay for *watched* names, and `tracking/trades.json` is the intentional, research-linked trade log. This command refreshes the holdings truth, reconciles the thesis overlay against it, and then reads the portfolio critically — for the user's own thinking, no advice boilerplate.
+Sync the user's **actual brokerage state** into Prism and review it. The brokerage snapshot is the **source of truth for holdings** — what is really held, how much, at what cost. `tracking/trades.json` is the intentional, research-linked trade log, and `reports/` holds every research run. This command refreshes the holdings truth, checks the trade log against it, and then reads the portfolio critically.
 
 Two modes, chosen automatically by capability, never by asking:
 
-- **Sync mode** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are available (environment or `<repo-root>/.env`): fetch live, reconcile, review, commit on a branch + PR.
-- **Review-only mode** — credentials absent (typical for a cloud sandbox that doesn't carry the keys): no fetch, no writes, no git. Read the committed `tracking/brokerage-snapshot.json`, lead with a staleness warning derived from its `fetched_at`, and run the same review + reconciliation *report* (Step 5–6) against it. If the snapshot is still the empty template (`fetched_at: null`), stop: `"No brokerage snapshot yet and SnapTrade credentials are unavailable here — run /sync-portfolio from an environment with SNAPTRADE_CLIENT_ID / SNAPTRADE_CONSUMER_KEY configured."`
+- **Sync mode** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are available (environment or `<repo-root>/.env`): fetch live, check trades, review, commit on a branch + PR.
+- **Review-only mode** — credentials absent (typical for a cloud sandbox that doesn't carry the keys): no fetch, no writes, no git. Read the committed `tracking/brokerage-snapshot.json`, lead with a staleness warning derived from its `fetched_at`, and run the same trade check + review (Steps 4–5) against it. If the snapshot is still the empty template (`fetched_at: null`), stop: `"No brokerage snapshot yet and SnapTrade credentials are unavailable here — run /sync-portfolio from an environment with SNAPTRADE_CLIENT_ID / SNAPTRADE_CONSUMER_KEY configured."`
 
-The SnapTrade Fidelity integration is **read-only** (no trade placement); this command never mutates anything at the brokerage. Everything after `/sync-portfolio` is an optional focus hint (e.g. `/sync-portfolio concentration` or `/sync-portfolio just the reconciliation`) — honor it in the review; with no hint, run the full review.
+The SnapTrade Fidelity integration is **read-only** (no trade placement); this command never mutates anything at the brokerage. Everything after `/sync-portfolio` is an optional focus hint (e.g. `/sync-portfolio concentration` or `/sync-portfolio just the options`) — honor it in the review; with no hint, run the full review.
 
 ## Steps
 
@@ -33,16 +33,14 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
    - Exit 2 (credentials missing after all — e.g. empty values) → drop back cleanly (`git switch main && git branch -D sync-portfolio/<id>`) and continue in review-only mode from the committed snapshot.
    - Exit 1 (credentials rejected / network / no accounts) → report the script's stderr, clean up the branch the same way, and stop.
 
-4. **Reconcile the thesis overlay against the snapshot** — the snapshot owns "what's held"; this step only keeps the thesis overlay (`positions-thesis.json` = held-name theses, `candidates.json` = watched-name theses) coherent with it. A held name with no thesis is **not** a defect — it needs no stub; it surfaces in Step 5's held-without-thesis review as a ready-to-run `/research`. Build a numbered list of proposed fixes; **do not write anything yet**:
+4. **Check the trade log against the snapshot** (read-only — this step never writes):
 
-   - **Held, thesis filed under candidates** — a snapshot position whose ticker is in `candidates.json` (you now hold a name you were only watching) → propose moving the entry (with its `reports[]`/`events[]`) into `positions-thesis.json` and deleting it from candidates. The thesis moves from the watch overlay to the held overlay.
-   - **Thesis on an exited name** — a `positions-thesis.json` entry whose ticker is absent from the snapshot (you no longer hold it, but its thesis is still filed as held) → propose pruning the stale entry, or keeping it as a closed-position record. Flag, don't assume: a transfer or a sub-$1 residual can look like an exit.
    - **Unlogged trades** — snapshot activities of type buy/sell with no matching `trades.json` entry (match on ticker + date ±1 day + direction). **Never write `trades.json` here** — it mirrors the Notion Investment Log 1:1 and is owned by `/log-trade`; list the misses and suggest `/log-trade` per trade instead.
    - **Share-count drift** — a name in both the snapshot and `trades.json`, but snapshot units disagree materially with what `trades.json` history implies → report the delta (informational; the snapshot is the truth).
 
-   Present the write-fixes (first two categories) as a numbered list and ask which to apply — `"1,3"`, `"all"`, or `"none"` — then apply the approved ones on the branch, updating each touched file's `last_updated`. If there are no proposed fixes, say `"The thesis overlay is coherent with the brokerage."` and move on.
+   If both lists are empty, say `"Trade log is consistent with the brokerage."` and move on.
 
-5. **Review** — the chat-facing product. Read the snapshot (plus `positions-thesis.json` reports/events and recent `reports/` runs) and write a terse, falsifiable review — Prism voice, investor stance (mostly multi-year holds plus a small speculative sleeve — don't judge an evidently short-term position by a multi-year bar), no disclaimers:
+5. **Review** — the chat-facing product. Read the snapshot (plus the `reports/` runs covering held names) and write a terse, falsifiable review — Prism voice, investor stance (mostly multi-year holds plus a small speculative sleeve — don't judge an evidently short-term position by a multi-year bar), no disclaimers:
 
    - **Shape** — total value, cash %, position count, top-3 concentration (% of equity value). Call out single-position concentration explicitly when one name dominates.
    - **Per-position** — units, market value, open P&L vs average cost. Order by weight.
@@ -50,33 +48,32 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
      - **Share encumbrance** — for each short call, `contracts x multiplier` shares of the underlying are committed. Compare against the held share count and say what fraction is encumbered; a short call on a name held below the contract size is **naked**, flag it explicitly.
      - **Expiry proximity** — contracts expiring within ~2 weeks, and any whose expiry has already passed relative to today (a stale line the brokerage hasn't cleared yet). Note assignment risk where the underlying's current price is through the strike.
      State "no open option contracts" when the array is empty, and say so plainly if `options[]` is absent from an older snapshot rather than inferring none.
-   - **Held without a thesis** — held positions whose ticker has no `reports[]` entry in `positions-thesis.json`: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. This is the overlay's main gap-finder — the snapshot knows *what* is held; this flags *what lacks a why*.
-   - **Active events on held names** — surface `events[]` with `status: "active"` (buy triggers, falsifiers, monitors) for held tickers; flag any where recent snapshot activity or price is near the condition. Label each with its `horizon`: a `spec` event is a trade level/catalyst for a short-term position, not a multi-year thesis breaker.
-   - **Thesis staleness** — held names whose latest `long` `reports[]` entry is >6 months old; separately, `spec` entries/events older than ~3 months are likely expired trades — suggest marking them stale.
+   - **Held without research** — held positions (excluding index funds and the cash sweep) that no run in `reports/` covered (no `tickers/<TICKER>.md`, no `$<TICKER>` in any `final-report.md`): name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. The snapshot knows *what* is held; this flags *what lacks a why*.
+   - **Stale research** — held names whose most recent covering run is >6 months old (run date = the report dir's date prefix). Give the run, its date, and its Market verdict for the name, and suggest a refresh `/research` question.
    - **Recent activity** — notable buys/sells/dividends/deposits from the lookback window, cross-linked to `trades.json`/journal entries where they exist.
    - If the user gave a focus hint, weight the review toward it. State "unknown" where the snapshot doesn't answer something; never fill gaps fluently.
 
-   In review-only mode this step runs against the committed snapshot and the reconciliation findings from Step 4's logic are **reported only** (no numbered apply-prompt, no writes) — end with a note that fixes require a sync-mode run.
+   In review-only mode Steps 4–5 run against the committed snapshot; nothing is written.
 
-6. **Ship gate** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json`, plus any tracking files changed in Step 4. **Only if Step 4 changed `positions-thesis.json` or `candidates.json`** (dashboard inputs), run `python3 scripts/dashboard_due.py` and keep its one-line decision; otherwise the dashboard is out of scope (no check, no regen).
+6. **Ship gate** (sync mode only) — **show the user** the file to be committed: `tracking/brokerage-snapshot.json`. The snapshot is not a dashboard input, so there's no dashboard check or regen.
 
    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this portfolio sync?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"
 
-   Set the `preview` of both shipping options to the review's headline lines (concentration, cash, fixes applied, held-without-thesis count) plus the dashboard decision line if one was computed.
+   Set the `preview` of both shipping options to the review's headline lines (concentration, cash, unlogged-trade count, held-without-research count).
 
-   **Decline path** ("Don't commit"): `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise, if the dashboard decision was `regenerate` (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now and stage `dashboard/index.html` with the run; report any error but don't block the commit.
+   **Decline path** ("Don't commit"): `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise:
    ```bash
-   git add tracking/brokerage-snapshot.json   # + positions-thesis.json / candidates.json if fixed; + dashboard/index.html if regenerated
+   git add tracking/brokerage-snapshot.json
    git commit -m "sync-portfolio: <YYYY-MM-DD>"
    git push -u origin sync-portfolio/<id>
-   gh pr create --base main --head sync-portfolio/<id> --title "sync-portfolio: <YYYY-MM-DD>" --body "<one line: N accounts, M positions, fixes applied if any>"
+   gh pr create --base main --head sync-portfolio/<id> --title "sync-portfolio: <YYYY-MM-DD>" --body "<one line: N accounts, M positions>"
    ```
    No second prompt — "Ship it" → `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
 
-7. **Report back** — mode used, snapshot age, accounts/positions synced, fixes applied (or "reported only"), unlogged trades suggested for `/log-trade`, and the PR URL if opened.
+7. **Report back** — mode used, snapshot age, accounts/positions synced, unlogged trades suggested for `/log-trade`, and the PR URL if opened.
 
 ## Security notes
 
@@ -86,10 +83,10 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 ## Examples
 
 `/sync-portfolio`
-→ creds found → branch `sync-portfolio/2026-07-12-091500` → fetch → 2 fixes proposed (VRT now held → move its thesis from candidates to positions-thesis; SNAP no longer held → prune its stale thesis entry), user applies both → review: 61% top-3 concentration, 4% cash, 3 names held with no research run on file (→ ready-to-run `/research`), NOW held 14 months since last thesis check → AskUserQuestion → commit + PR.
+→ creds found → branch `sync-portfolio/2026-07-12-091500` → fetch → 1 unlogged VRT buy (→ suggest `/log-trade`) → review: 61% top-3 concentration, 4% cash, 3 names held with no research run on file (→ ready-to-run `/research`), NOW's last research 14 months old → ship gate → commit + PR.
 
 `/sync-portfolio concentration`
 → same flow; the review leads with concentration and position sizing.
 
 `/sync-portfolio` (on a phone / cloud sandbox without the keys)
-→ review-only: "Snapshot is 6 days old (fetched 2026-07-06)." → same review off the committed snapshot; reconciliation differences reported but not applied; no branch, no PR.
+→ review-only: "Snapshot is 6 days old (fetched 2026-07-06)." → same trade check + review off the committed snapshot; no branch, no PR.

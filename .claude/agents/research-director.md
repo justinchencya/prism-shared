@@ -57,9 +57,8 @@ The user is **primarily a long-term investor** (multi-year core holdings) who al
 1. The `/research` command gives you the **run directory to use, verbatim** (e.g. `reports/2026-05-28-edge-computing-agentic-ai/`) — its basename already encodes the date and slug. Use exactly that path; do **not** invent your own slug or directory. (The command cut a matching git branch off `main` before dispatching you, so the path must match.) Derive the run's date and slug from the basename when you need them later.
 2. Create that run directory with subdirs `individual/` and `critiques/`. (`tickers/` is created later only if the question is investable.)
 3. Read any user-provided source files now. WebFetch any user-provided URLs once and note key content.
-4. Read `tracking/brokerage-snapshot.json` if it exists. Build `portfolio_tickers` = set of all `symbol` values across `accounts[].positions[]` — the source of truth for what's held. Also read `tracking/positions-thesis.json` if it exists (the thesis overlay: per-name `reports[]`/`events[]` for held names) — it provides thesis context and Phase 8 write targets, **not** the holdings set; a held name may have no overlay entry.
-5. Read `tracking/candidates.json` if it exists. Build `candidate_tickers` = set of all tickers in `entries`. If a ticker appears in both sets, `portfolio_tickers` wins (it's held; the candidates entry is a leftover for `/sync-portfolio` to reconcile).
-6. Note both sets at the top of `plan.md` under the meta-framing: `Portfolio: [...]  |  Candidates: [...]`. This context shapes ticker badges in the final report and write targets in Phase 8.
+4. Read `tracking/brokerage-snapshot.json` if it exists. Build `portfolio_tickers` = set of all `symbol` values across `accounts[].positions[]` — the source of truth for what's held.
+5. Note the set at the top of `plan.md` under the meta-framing: `Portfolio: [...]`. It shapes ticker badges in the final report.
 
 ### Phase 1 — Meta-framing (before decomposition)
 
@@ -91,7 +90,7 @@ Group Layer-2 items into **3–8 research bundles** (**2–3 when effort=quick**
 - Bundles can be uneven in size, but no bundle should be so big one researcher can't do all of it well in one pass.
 - If two bundles need to share a hard-to-fetch source, note it — but do not collapse them just for that.
 
-Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, a `horizon: long` or `horizon: spec` line (the horizon the question implies, per the Investor stance), and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
+Write `reports/<run>/plan.md` containing: the user's question, the Meta-framing section from Phase 1, full question tree, bundle allocation (bundle id + topic slug + the Layer-2 items it covers), effort level, and investable-or-not call from Phase 2. Number bundles `01`, `02`, etc.
 
 ### Phase 4 — Dispatch round 1 (parallel)
 
@@ -239,9 +238,9 @@ investable: <yes/no>
 ## Investment thesis 1.1: <short headline>
 <2–4 sentences: the thesis, what has to be true on the relevant horizon (multi-year by default), what kills it. [NN] / $TICKER refs.>
 
-### $TICKER1 — <Market verdict: Buy / Hold / Avoid> `[PORTFOLIO]` | `[CANDIDATE]` | `[NEW]`
+### $TICKER1 — <Market verdict: Buy / Hold / Avoid> `[PORTFOLIO]` | `[NEW]`
 
-Badge rule: `[PORTFOLIO]` if the ticker is in `portfolio_tickers`, `[CANDIDATE]` if in `candidate_tickers`, `[NEW]` if neither. Use exactly one badge per ticker block.
+Badge rule: `[PORTFOLIO]` if the ticker is in `portfolio_tickers`, `[NEW]` otherwise. Use exactly one badge per ticker block.
 
 - **Company snapshot**: One sentence — what the business does, primary revenue segments with rough mix, market cap / size class. (Reader should know what the company is without prior knowledge. Terse, operator-level — not a Wikipedia lede.)
 - **Why this ticker is in this report**: One sentence — explicit tie from the run's central question to this specific company's business (e.g., "SpaceX IPO re-rates the listed-space comp set; VSAT is the public MSS-spectrum operator most directly comped against Starlink.").
@@ -277,79 +276,7 @@ Rules baked into the synthesis:
 - **Every numeric or empirical claim** in the final report must carry `[NN]` (round-1 report) or `$TICKER` (ticker report) reference. No claim sourced from director's priors.
 - The old flat "Tickers" table is gone — tickers live as `### $TICKER` subsections under their thesis.
 
-### Phase 8 — Extract and update tracking items
-
-After writing `final-report.md`, update `tracking/positions-thesis.json`, `tracking/candidates.json`, and `tracking/catalysts.json`. Read all three files first.
-
-#### 8a — Ticker-level events (positions-thesis.json + candidates.json)
-
-Every entry written in this phase carries the run's `horizon` from `plan.md`.
-
-For each ticker in the final report and its ticker report file, extract:
-1. Hold/Avoid verdict with an explicit price level or condition that would flip to Buy → `type: "buy_trigger"`
-2. Falsifier bullets requiring ongoing monitoring (quarterly metrics, regulatory outcomes, competitive data points — not established historical facts) → `type: "falsifier"`
-3. Key Uncertainties naming a future event with an expected window, if ticker-specific → `type: "event_monitor"`
-
-**Where to write:**
-- If ticker is in `portfolio_tickers` (from Phase 0): write to that name's `events` array in `positions-thesis.json`. If the name has no entry there yet (held without a thesis until now), **create one** — `{ "ticker": "<T>", "reports": [], "events": [] }` populated by this run. This is how a held name acquires a thesis; it is not the forbidden empty-stub pattern, because the entry is created only to carry this run's real output.
-- If ticker is in `candidate_tickers` (from Phase 0): write to that entry's `events` array in `candidates.json`
-- If ticker is in neither file (`[NEW]`): **do not create any entry** — new tickers are surfaced to the user in Phase 9
-
-**Also append a `reports` entry** for any ticker that is in `portfolio_tickers` or `candidate_tickers`:
-```json
-{
-  "run": "<run-slug>",
-  "date": "<YYYY-MM-DD>",
-  "hypothesis": "<2-sentence falsifiable thesis from this run>",
-  "entry_condition": "<buy/add condition if verdict is Hold/Buy; null otherwise>",
-  "verdict": "<Buy | Hold | Avoid>",
-  "horizon": "<long | spec>"
-}
-```
-Append to the ticker's `reports` array in the appropriate file. Do not overwrite — append.
-
-**Event ID generation rule (SCREAMING-KEBAB-CASE):**
-
-- `<TICKER>-<TYPE_SHORT>-<KEYWORD>`
-  - TYPE_SHORT: `BUY` (buy_trigger) · `FAL` (falsifier) · `EVT` (event_monitor)
-  - KEYWORD: 1–2 words from the most specific, immutable part of the condition — the metric name, event type, or price level. Not the company name. Not a generic word.
-  - Examples: `PGR-BUY-180`, `CRM-FAL-CRPO`, `GOOGL-EVT-DOJ`, `AMZN-FAL-SILICON`
-- Once an `id` is written, never change it.
-
-**Before creating any event entry:**
-
-Search the ticker's `events` array (same `horizon` only) by `id` first, then fall back to `ticker + type + keyword substring` to catch minor ID drift. Events of the other horizon are separate entries — never update them from this run; on an `id` collision, suffix the new one `-SPEC`. If a match is found:
-- Compare the current run's verdict to the most recent `history` entry's `to_verdict`.
-- **If verdict changed**: append `{ "event": "verdict_change", "from_verdict": <prior>, "to_verdict": <new>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <why it changed> }`. Update the entry's top-level `status` if the change implies resolution.
-- **If verdict unchanged**: append `{ "event": "updated", "run": <slug>, "date": <today>, "note": "Rechecked — verdict unchanged." }`. Update `reviewed`.
-- Do not create a duplicate entry in either case.
-
-If no match: create a new event entry with `horizon: <run horizon>` and `history: [{ "event": "created", "from_verdict": null, "to_verdict": <verdict>, "run": <slug>, "date": <today>, "source_file": <path>, "note": <context> }]`.
-
-**Staleness note**: if an existing event entry's `added` date is >18 months before today and no run has touched it since, add `"stale_warning": "Review: added >18 months ago — consider marking stale."`.
-
-#### 8b — Catalyst entries (catalysts.json)
-
-Cross-cutting tensions or Key Uncertainties naming a discrete future event with an expected window that affects multiple tickers or is system-level (regulatory ruling, IPO, macro policy). Update `tracking/catalysts.json`; create with `{ "last_updated": "", "entries": [] }` if absent.
-
-Catalyst ID rule: `<MACRO_KEY>-<YEAR>-<EVENT>` or `<TICKER>-<EVENT>-<YEAR>`. Examples: `GOOGL-DOJ-2026`, `AMZN-ANTHROPIC-IPO`, `FED-RATE-2026`.
-
-**Catalyst → events linkage (on resolution):**
-If a catalyst entry is being updated to `status: "resolved"` in this run:
-For each ticker in that catalyst's `tickers_affected`, find active event entries for that ticker in positions-thesis.json or candidates.json.
-- If the catalyst outcome changes the market verdict: append a `verdict_change` history event with `"resolving_catalyst": "<catalyst_id>"` in the note.
-- If neutral: append an `updated` history event: `"note": "Catalyst <catalyst_id> resolved — [outcome in one sentence]. Condition unaffected."`
-
-**What NOT to extract**:
-- Buy verdicts on names already rated Buy (no action needed)
-- Load-bearing claims that are established historical facts
-- Uncertainties with no expected monitoring event or timeline
-- Bull-case price targets with no actionable entry condition
-
-Non-optional for investable runs. For non-investable runs, extract catalysts only.
-Update `last_updated` in each modified file to today's date. Do not perform any git operations here.
-
-### Phase 9 — Report back to user
+### Phase 8 — Report back to user
 
 Reply with **only**:
 
@@ -359,9 +286,6 @@ Reply with **only**:
 4. Ticker count (or "none — not investable").
 5. Revision rounds actually run (split: round-1 / ticker).
 6. Surviving uncertainties — 1–3 sentences max.
-7. Count of new tracking entries added (portfolio/candidates events + catalysts combined), or "0 — no new watch items extracted."
-8. **New tickers prompt** (investable runs only): if any tickers in the final report are in neither `portfolio_tickers` nor `candidate_tickers`, list them with their one-line market verdict and ask the user: "Add any of these to candidates.json?" Wait for the user's response, then write the selected tickers as new entries (`{ ticker, added_date: today, reports: [<this run's entry>], events: [<extracted events>] }`) to `tracking/candidates.json`. If the user says none or skips, do nothing.
-
 Do not paste report contents beyond the verdict table (point 2). Do not summarize the synthesis prose. The verdict table is the only at-a-glance digest you reproduce inline; everything else stays in the file on disk. If you find yourself writing more than the verdict table plus ~10 lines back, you are duplicating the report — stop and trim.
 
 ## Manifest prompt content

@@ -31,7 +31,7 @@ If the switch, pull, or branch fails, report and stop — never stash, reset, or
 
 ### Orchestrating the director (you dispatch; the director only plans/critiques/synthesizes)
 
-The `research-director` agent runs as a subagent and the harness disables nested `Agent` dispatch, so **it has no way to spawn researchers** — only this top-level session can. The director's job (`.claude/agents/research-director.md`) is planning, allocation, critique, and synthesis; it signals every point where researchers are needed by writing a dispatch manifest to `reports/<id>/dispatch-manifest.json` and stopping with the exact line `DISPATCH_REQUIRED: reports/<id>/dispatch-manifest.json`. You read that manifest, dispatch the listed researchers yourself via the `Agent` tool, then resume the director. Loop this until the director finishes Phase 9 (no more manifests) instead of stopping.
+The `research-director` agent runs as a subagent and the harness disables nested `Agent` dispatch, so **it has no way to spawn researchers** — only this top-level session can. The director's job (`.claude/agents/research-director.md`) is planning, allocation, critique, and synthesis; it signals every point where researchers are needed by writing a dispatch manifest to `reports/<id>/dispatch-manifest.json` and stopping with the exact line `DISPATCH_REQUIRED: reports/<id>/dispatch-manifest.json`. You read that manifest, dispatch the listed researchers yourself via the `Agent` tool, then resume the director. Loop this until the director finishes Phase 8 (no more manifests) instead of stopping.
 
 1. **Spawn the director** via the `Agent` tool (`subagent_type: research-director`, foreground — your next action depends on its result). The prompt includes:
    - The user's question, verbatim.
@@ -44,22 +44,24 @@ The `research-director` agent runs as a subagent and the harness disables nested
 
 2. **If the `Agent` tool is unavailable or the spawn fails**: stop and tell the user plainly — "the research pipeline requires the `Agent` tool to dispatch researchers in parallel; it isn't available in this session, so I'm not running the director inline." Do **not** fall back to doing the research yourself or letting the director do it inline. This is the one guard the whole redesign exists to enforce — never degrade silently.
 
-3. **Dispatch loop** — repeat until the director's reply is the Phase 9 report-back (final report path + verdict table, etc.) rather than a `DISPATCH_REQUIRED` line:
+3. **Dispatch loop** — repeat until the director's reply is the Phase 8 report-back (final report path + verdict table, etc.) rather than a `DISPATCH_REQUIRED` line:
    a. Read `reports/<id>/dispatch-manifest.json`. It has `{ "phase": "...", "dispatches": [{ "id", "output_path", "prompt" }, ...] }`.
    b. Dispatch every entry **in parallel** — one message, one `Agent` tool call per entry, `subagent_type: researcher`, `prompt` taken verbatim from the manifest entry.
    c. **Gate check**: after all return, confirm every entry's `output_path` exists and is non-empty. For any that don't, redispatch that single entry once (same prompt). If it's still missing/empty after the retry, proceed without it and note the failure in the resume message below — do not write the file yourself.
    d. **Resume the director**: `SendMessage` to the director's name/id with a message naming the phase just completed, the manifest's dispatch ids, their output paths, and any that failed the gate check after retry. Tell it to continue the workflow from exactly where it left off.
-   e. The director's reply is either another `DISPATCH_REQUIRED` line (go to 3a for the new manifest) or the final Phase 9 report-back.
+   e. The director's reply is either another `DISPATCH_REQUIRED` line (go to 3a for the new manifest) or the final Phase 8 report-back.
 
 4. **Record keeping**: nothing else to do here — the director already writes `dispatch_mode: subagent` into `plan.md`, and each manifest is overwritten per phase so `reports/<id>/dispatch-manifest.json` on disk at the end just reflects the last phase (harmless; it's inside the run dir and gets committed with everything else).
 
-After the director's Phase 9 report-back (final report path, verdict table, etc.):
+After the director's Phase 8 report-back (final report path, verdict table, etc.):
 
 0. **Show results first** — before any git step or prompt, output as plain text: the final report path (`reports/<id>/final-report.md`) and, if the director's reply included a **verdict table** (investable runs), that table verbatim. Do not paste any other report contents. Text emitted mid-turn between tool calls is not reliably visible to the user, so this alone is not enough — the table is also carried *inside* the Step 3 prompt (as the option preview) and repeated in the final message.
 
-1. **Dashboard decision** — the run added a report and may have appended to `tracking/`, both dashboard inputs. Run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (Rule in `CLAUDE.md` → **Git convention**: once per trading day, after the 13:00 PT close.)
+   **Then show the charts** (investable runs): for each `reports/<id>/tickers/chart_<TICKER>.png`, send the image to the user with whatever file-sharing tool the session has (e.g. `SendUserFile`, rendered inline), captioned with the ticker, its Market verdict, and its key levels line from the verdict table — one call for all charts. If no such tool exists, list the chart paths instead.
 
-2. **Show the user** the list of files that would be committed (`reports/<id>/` and any changed `tracking/` files), using `git status --short` or a plain file listing, plus the dashboard decision line.
+1. **Dashboard decision** — the run added a report, a dashboard input. Run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (Rule in `CLAUDE.md` → **Git convention**: once per trading day, after the 13:00 PT close.)
+
+2. **Show the user** the list of files that would be committed (`reports/<id>/`), using `git status --short` or a plain file listing, plus the dashboard decision line.
 
 3. **Ship gate** — a single `AskUserQuestion` call with **one** question, "Ship this research run?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
@@ -74,7 +76,7 @@ After the director's Phase 9 report-back (final report path, verdict table, etc.
 
 ```bash
 cd <repo-root>
-git add reports/<id> tracking/   # + dashboard/index.html if regenerated in Step 3
+git add reports/<id>   # + dashboard/index.html if regenerated in Step 3
 git commit -m "research: <slug> (<date>)"
 git push -u origin research/<id>
 ```
