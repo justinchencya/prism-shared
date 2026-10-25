@@ -1,10 +1,10 @@
 ---
-description: Capture a free-form reflection, hesitation, imagined scenario, or road-not-taken decision into the Prism timeline. Always asks whether to link related research runs and tickers (portfolio / candidate / add-to-candidate), suggesting matches when possible. Appends to tracking/journal.json, optionally regenerates the dashboard (user-gated at commit time), and lands the entry on its own journal/<id> branch + PR.
+description: Capture a free-form reflection, hesitation, imagined scenario, or road-not-taken decision into the Prism timeline. Always asks whether to link related research runs and tickers (portfolio / candidate / add-to-candidate), suggesting matches when possible. Appends to tracking/journal.json, regenerates the dashboard when due (once per trading day after the close), and lands the entry on its own journal/<id> branch + PR.
 ---
 
 Capture a **journal entry** — a reflection, hesitation, imagined scenario, or a decision you could have made but didn't — into the Prism timeline so you can look back and reflect on your thinking process. This is the user's own thinking log; not advice, no boilerplate.
 
-A journal entry does **no** research and writes **no** Notion. It appends to `tracking/journal.json`, optionally linking research runs and tickers, optionally regenerates the dashboard (only if the user opts in at commit time), and lands on its own branch + PR (same git flow as `/scout`).
+A journal entry does **no** research and writes **no** Notion. It appends to `tracking/journal.json`, optionally linking research runs and tickers, regenerates the dashboard when `scripts/dashboard_due.py` says it's due, and lands on its own branch + PR (same git flow as `/scout`).
 
 Everything the user typed after `/journal` is the **raw reflection** — a seed to refine, not the final entry. You help the user turn their rough thought into clearer prose before it's stored (e.g. `/journal hesitated on adding to NVDA before earnings — worried the AI-capex narrative was already fully priced`). If the user typed nothing after `/journal`, ask them what they want to record before proceeding — never write an empty entry.
 
@@ -117,37 +117,34 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
    ```
    Update `last_updated` to today. Write the file. Report: `"Logged to tracking/journal.json (ID: journal-20260622-001)."`
 
-7. **Dashboard regeneration is optional** — regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy), so it is **not** run automatically. It is gated on the user's choice in Step 8 — don't run it here. (When regenerated, the entry appears as a violet node in the Timeline view.)
+7. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (When regenerated, the entry appears as a violet node in the Timeline view.)
 
-8. **Commit & PR** — the work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`, and `tracking/candidates.json` if a ticker was added). Note that `dashboard/index.html` is included only if the user opts to regenerate it.
+8. **Ship gate** — the work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`, and `tracking/candidates.json` if a ticker was added) and the dashboard decision line.
 
-   Ask for permission using a single `AskUserQuestion` call with four questions:
-   - "Commit and push this journal entry?" (Yes / No)
-   - "Open a pull request on GitHub?" (Yes / No)
-   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
-   - "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
+   Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this journal entry?", and three options in this order:
+   - "Ship it — commit, push, open PR, merge" (Recommended)
+   - "Commit, push & open PR — leave it open"
+   - "Don't commit"
 
-   Wait for the answers. **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` from the repo root now, before staging. Report success or any error output. **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D journal/<YYYY-MM-DD>-<NNN>` (the entry stays in the working tree; only the branch is discarded). Report and stop.
+   Set the `preview` of both shipping options to the one-line entry summary from Step 5 plus the dashboard decision line.
 
-   If the user approves the commit, run (the branch already exists — just stage, commit, push). Include `dashboard/index.html` in the `git add` **only if it was regenerated**:
+   **If the user picks "Don't commit"**, return to `main` and drop the branch: `git switch main && git branch -D journal/<YYYY-MM-DD>-<NNN>` (the entry stays in the working tree; only the branch is discarded). Report and stop. Otherwise, **if the decision was `regenerate`** (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now, before staging; report any error but don't block the commit. If the user explicitly asked to skip the dashboard, skip it.
+
+   Stage, commit, push (the branch already exists). Include `dashboard/index.html` **only if it was regenerated**:
    ```bash
    cd <repo-root>
    git add tracking/journal.json   # + dashboard/index.html if regenerated; + tracking/candidates.json if a ticker was added
    git commit -m "journal: <date> (<id>)"
    git push -u origin journal/<YYYY-MM-DD>-<NNN>
-   ```
-
-   If the user also approved the PR, run:
-   ```bash
    gh pr create --base main --head journal/<YYYY-MM-DD>-<NNN> --title "journal: <date> (<id>)" --body "<one line: first ~80 chars of the reflection + linked tickers/runs>"
    ```
 
-   No second prompt — if the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise leave it open for the user to merge on GitHub. Either way, finish on `main`:
+   No second prompt — if the user picked "Ship it", run `gh pr merge --squash --delete-branch`; otherwise leave it open for the user to merge on GitHub. Either way, finish on `main`:
    ```bash
    git switch main
    ```
 
-   The remote is named `origin`. `dashboard/index.html` is tracked and committed with the entry only if the user opted to regenerate it. If any git/`gh` step fails, report the error and stop — no destructive retry.
+   The remote is named `origin`. If any git/`gh` step fails, report the error and stop — no destructive retry.
 
 9. **Report back** — the entry `id`, the path (`tracking/journal.json`), what was linked, the PR URL (if opened), and a one-line confirmation.
 
@@ -159,7 +156,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 ## Examples
 
 `/journal hesitated on adding to NVDA before earnings — the AI-capex narrative felt fully priced and I didn't want to chase`
-→ Refine the rough thought into clearer prose → show it → user approves → cut branch `journal/2026-06-22-001` → suggest runs (NVDA-tagged + recent) and tickers (`NVDA [CANDIDATE]`) → user links a run + NVDA → confirm → append entry `journal-20260622-001` → regen dashboard → commit + PR.
+→ Refine the rough thought into clearer prose → show it → user approves → cut branch `journal/2026-06-22-001` → suggest runs (NVDA-tagged + recent) and tickers (`NVDA [CANDIDATE]`) → user links a run + NVDA → confirm → append entry `journal-20260622-001` → ship gate → (dashboard regen if due) → commit + PR + merge.
 
 `/journal so um like what if I'd just kept the whole SNAP position instead of rotating into RKLB and NOW, you know, want to revisit this in like 6 months`
 → Refine to e.g. *"What if I'd kept the full SNAP position instead of rotating into RKLB and NOW? Want to revisit in 6 months."* → user approves → tickers detected: `SNAP [NEW]`, `RKLB [PORTFOLIO]`, `NOW [PORTFOLIO]` → user links all three → asked whether to add SNAP to candidates → records the road-not-taken reflection for later review.

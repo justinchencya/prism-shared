@@ -58,23 +58,23 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 
    In review-only mode this step runs against the committed snapshot and the reconciliation findings from Step 4's logic are **reported only** (no numbered apply-prompt, no writes) — end with a note that fixes require a sync-mode run.
 
-6. **Commit & PR** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json`, plus any tracking files changed in Step 4. Ask via a single `AskUserQuestion` call:
-   - "Commit and push this portfolio sync?" (Yes / No)
-   - "Open a pull request on GitHub?" (Yes / No)
-   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
-   - Only if Step 4 changed `positions-thesis.json` or `candidates.json` (dashboard inputs): "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
+6. **Ship gate** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json`, plus any tracking files changed in Step 4. **Only if Step 4 changed `positions-thesis.json` or `candidates.json`** (dashboard inputs), run `python3 scripts/dashboard_due.py` and keep its one-line decision; otherwise the dashboard is out of scope (no check, no regen).
 
-   If regen approved: run `python3 scripts/generate_dashboard.py` now and stage `dashboard/index.html` with the run. **Decline path**: `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise:
+   Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this portfolio sync?", and three options in this order:
+   - "Ship it — commit, push, open PR, merge" (Recommended)
+   - "Commit, push & open PR — leave it open"
+   - "Don't commit"
+
+   Set the `preview` of both shipping options to the review's headline lines (concentration, cash, fixes applied, held-without-thesis count) plus the dashboard decision line if one was computed.
+
+   **Decline path** ("Don't commit"): `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise, if the dashboard decision was `regenerate` (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now and stage `dashboard/index.html` with the run; report any error but don't block the commit.
    ```bash
    git add tracking/brokerage-snapshot.json   # + positions-thesis.json / candidates.json if fixed; + dashboard/index.html if regenerated
    git commit -m "sync-portfolio: <YYYY-MM-DD>"
    git push -u origin sync-portfolio/<id>
-   ```
-   If the PR was approved:
-   ```bash
    gh pr create --base main --head sync-portfolio/<id> --title "sync-portfolio: <YYYY-MM-DD>" --body "<one line: N accounts, M positions, fixes applied if any>"
    ```
-   No second prompt — PR and merge both approved → `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
+   No second prompt — "Ship it" → `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
 
 7. **Report back** — mode used, snapshot age, accounts/positions synced, fixes applied (or "reported only"), unlogged trades suggested for `/log-trade`, and the PR URL if opened.
 

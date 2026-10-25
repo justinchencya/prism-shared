@@ -8,15 +8,15 @@ Parse the user's invocation for:
 
 - **question** (required): everything that isn't an explicit `sources:` or `effort:` flag is the question.
 - **sources** (optional): comma-separated URLs and/or file paths after `sources:`.
-- **effort** (optional): one of `quick`, `low`, `medium`, `high` after `effort:`. Controls the upper bound on revision rounds (quick=0, low=1, medium=2, high=4). `quick` also shrinks the whole pipeline: single pass, no critique loop, survey-depth researchers, one combined ticker scan instead of per-ticker deep dives — high-level theses + verdict table, fast.
+- **effort** (optional, **default `quick`**): one of `quick`, `low`, `medium`, `high` after `effort:` — or stated in plain words anywhere in the invocation ("high effort", "medium depth", "deep dive" → `high`, "thorough" → `medium`). Controls the upper bound on revision rounds (quick=0, low=1, medium=2, high=4). `quick` also shrinks the whole pipeline: single pass, no critique loop, survey-depth researchers, one combined ticker scan instead of per-ticker deep dives — high-level theses + verdict table, fast.
 
 If no question is present, ask the user for one before dispatching.
 
-If no `effort:` flag was supplied, use `AskUserQuestion` to ask which level the user wants. Default highlight on `quick` (Recommended) — it's the usual case. Briefly describe what each level means (quick: fast single-pass scan, high-level theses + verdicts; low: full pipeline, 1 revision round; medium: thorough default, 2 rounds; high: deepest iteration, 4 rounds). Do not silently fall back to a default — surface the choice every time so the user makes it consciously.
+If no effort was given, use `quick` — **do not ask**. State the level in one line when starting (e.g. `effort: quick (default — pass effort:high for a deeper run)`) so the user can interrupt and rerun deeper if they meant to.
 
 **Branch off `main` before any work** (per the **Git convention** in `CLAUDE.md`). Compute the run identifier up front so the branch and run dir are fixed before the director runs:
 
-1. Resolve today's date (`date +%Y-%m-%d`) and derive a short kebab-case slug from the question (3–6 words capturing its core, e.g. `ai-capex-utility-load`). The run identifier is `<YYYY-MM-DD>-<slug>`; the run dir is `reports/<id>/` and the branch is `research/<id>`.
+1. Resolve today's date (`date +%Y-%m-%d`) and derive a short **English** kebab-case slug from the question (3–6 words capturing its core, e.g. `ai-capex-utility-load` — translate if the question isn't in English). The run identifier is `<YYYY-MM-DD>-<slug>`; the run dir is `reports/<id>/` and the branch is `research/<id>`.
 2. Clean-tree guard, sync, and cut the branch:
 
 ```bash
@@ -27,7 +27,7 @@ git switch main && git pull --ff-only origin main
 git switch -c research/<id>
 ```
 
-If the switch, pull, or branch fails, report and stop — never stash, reset, or force.
+If the switch, pull, or branch fails, report and stop — never stash, reset, or force. If the question had non-English text and a `set_session_title` tool is available, rename the session to `research: <slug>` now (see **Voice** in `CLAUDE.md`).
 
 ### Orchestrating the director (you dispatch; the director only plans/critiques/synthesizes)
 
@@ -57,21 +57,20 @@ After the director's Phase 9 report-back (final report path, verdict table, etc.
 
 0. **Show results first** — before any git step or prompt, output as plain text: the final report path (`reports/<id>/final-report.md`) and, if the director's reply included a **verdict table** (investable runs), that table verbatim. Do not paste any other report contents. Text emitted mid-turn between tool calls is not reliably visible to the user, so this alone is not enough — the table is also carried *inside* the Step 3 prompt (as the option preview) and repeated in the final message.
 
-1. **Dashboard regeneration is optional** — the run added a report and may have appended to `tracking/`, both of which the dashboard reads, but regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy). So it is **not** run automatically — it is gated on the user's choice in Step 3. Don't run it here.
+1. **Dashboard decision** — the run added a report and may have appended to `tracking/`, both dashboard inputs. Run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (Rule in `CLAUDE.md` → **Git convention**: once per trading day, after the 13:00 PT close.)
 
-2. **Show the user** the list of files that would be committed (`reports/<id>/` and any changed `tracking/` files), using `git status --short` or a plain file listing. Note that `dashboard/index.html` is included only if the user opts to regenerate it (Step 3).
+2. **Show the user** the list of files that would be committed (`reports/<id>/` and any changed `tracking/` files), using `git status --short` or a plain file listing, plus the dashboard decision line.
 
-3. **Ask for permission** using a single `AskUserQuestion` call with four questions:
-   - "Commit and push these changes?" (Yes / No)
-   - "Open a pull request on GitHub?" (Yes / No)
-   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
-   - "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
+3. **Ship gate** — a single `AskUserQuestion` call with **one** question, "Ship this research run?", and three options in this order:
+   - "Ship it — commit, push, open PR, merge" (Recommended)
+   - "Commit, push & open PR — leave it open"
+   - "Don't commit"
 
-   **Put the results in the prompt itself**: on the first question ("Commit and push these changes?"), set the `preview` field of **both** options to the report path followed by the verdict table verbatim (or, for non-investable runs, the report path plus the final report's executive answer). The preview renders beside the options while the user answers — this is what guarantees the verdicts are visible at decision time.
+   **Put the results in the prompt itself**: set the `preview` of both shipping options to the report path, the verdict table verbatim (or, for non-investable runs, the final report's executive answer), and the dashboard decision line. The preview renders beside the options while the user answers — this is what guarantees the verdicts are visible at decision time.
 
-   Wait for the user's answers. **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` from the repo root now, before staging. Report any error output but don't block the commit on it. **If the user declines the commit**, return to `main` and drop the unused branch: `git switch main && git branch -D research/<id>` (the run's files remain in the working tree; nothing was pushed). Report and stop.
+   Wait for the answer. **If the user picks "Don't commit"**, return to `main` and drop the unused branch: `git switch main && git branch -D research/<id>` (the run's files remain in the working tree; nothing was pushed). Report and stop. Otherwise, **if the decision was `regenerate`** (or the user's answer explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` from the repo root now, before staging; report any error output but don't block the commit on it. If the user's answer explicitly asked to skip the dashboard, skip it.
 
-4. If the user approves the commit, run (the branch already exists — just stage, commit, push). Include `dashboard/index.html` in the `git add` **only if it was regenerated** in Step 3:
+4. Stage, commit, push (the branch already exists). Include `dashboard/index.html` in the `git add` **only if it was regenerated** in Step 3:
 
 ```bash
 cd <repo-root>
@@ -80,26 +79,26 @@ git commit -m "research: <slug> (<date>)"
 git push -u origin research/<id>
 ```
 
-5. If the user also approved the PR, run:
+5. Open the PR (both shipping options include it):
 
 ```bash
 gh pr create --base main --head research/<id> --title "research: <slug>" --body "<one-line: the question + effort>"
 ```
 
-6. No second prompt — use the merge answer from Step 3. If the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise (no PR, or merge declined) leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
+6. No second prompt — if the user picked "Ship it", run `gh pr merge --squash --delete-branch`; otherwise leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
 
 ```bash
 git switch main
 ```
 
-The remote is named `origin`; the branch `research/<id>` matches its run dir (e.g. `research/2026-05-28-edge-computing-agentic-ai`). The clean-tree guard already ran before branching; by commit time the uncommitted changes are this run's own files plus — only if the user opted to regenerate — `dashboard/index.html` (tracked, committed with the run). If any git/`gh` step fails, report the error and stop — don't retry destructively.
+The remote is named `origin`; the branch `research/<id>` matches its run dir (e.g. `research/2026-05-28-edge-computing-agentic-ai`). The clean-tree guard already ran before branching; by commit time the uncommitted changes are this run's own files plus — only if it was regenerated — `dashboard/index.html` (tracked, committed with the run). If any git/`gh` step fails, report the error and stop — don't retry destructively.
 
-**Final message (always, including the decline path)**: the report path, the **verdict table verbatim** (investable runs — it's the at-a-glance digest the user always wants), the PR URL if opened, and the merge outcome. Repeat the table here even though Step 0 and the Step 3 preview already showed it — the final message is the only output guaranteed to stay visible. Do not paste any other report contents.
+**Final message (always, including the decline path)**: the report path, the **verdict table verbatim** (investable runs — it's the at-a-glance digest the user always wants), the PR URL if opened, the merge outcome, and whether the dashboard was regenerated (with the decision line). Repeat the table here even though Step 0 and the Step 3 preview already showed it — the final message is the only output guaranteed to stay visible. Do not paste any other report contents.
 
 ## Examples
 
 `/research How is the AI capex cycle affecting electric utility load growth?`
-→ no effort flag → asks which level (quick recommended); no sources
+→ no effort given → runs at `quick` without asking; no sources
 
 `/research Which companies benefit most from on-shoring of advanced packaging? effort:high`
 → implies tickers; 4 revision rounds allowed

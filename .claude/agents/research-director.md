@@ -210,7 +210,7 @@ Read all final individual reports + all final ticker reports together. Write `re
 date: YYYY-MM-DD
 slug: <run-slug>
 question: <user's question, restated>
-effort: low | medium | high
+effort: quick | low | medium | high
 sources_seeded: <yes/no>
 investable: <yes/no>
 ---

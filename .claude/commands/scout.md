@@ -37,16 +37,16 @@ The scout run is a self-contained artifact. To commit it:
 
 1. **Show the results first, then the files** — before any prompt, output as plain text the path to `brief.md` and the agent's terse ranked candidate list (with the `/research "<question>"` reminder below), so the user can read it while answering. Text emitted mid-turn between tool calls is not reliably visible, so the list is also carried inside the Step 2 prompt and repeated in the final report-back. Then show the file that would be committed (`scouts/<timestamp>/brief.md` and supporting files).
 
-2. **Ask for permission** using a single `AskUserQuestion` call with three questions:
-   - "Commit and push the scout brief?" (Yes / No)
-   - "Open a pull request on GitHub?" (Yes / No)
-   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
+2. **Ship gate** (per **Git convention** in `CLAUDE.md`) — a single `AskUserQuestion` call with **one** question, "Ship this scout brief?", and three options in this order:
+   - "Ship it — commit, push, open PR, merge" (Recommended)
+   - "Commit, push & open PR — leave it open"
+   - "Don't commit"
 
-   **Put the results in the prompt itself**: on the first question, set the `preview` field of **both** options to the `brief.md` path followed by the ranked candidate list — this is what guarantees the list is visible at decision time.
+   **Put the results in the prompt itself**: set the `preview` of both shipping options to the `brief.md` path followed by the ranked candidate list — this is what guarantees the list is visible at decision time.
 
-   Wait for the user's answers. **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D scout/<timestamp>`. Report and stop.
+   Wait for the answer. **If the user picks "Don't commit"**, return to `main` and drop the branch: `git switch main && git branch -D scout/<timestamp>`. Report and stop.
 
-3. If the user approves the commit, run (the branch already exists — just stage, commit, push):
+3. Stage, commit, push (the branch already exists):
 
 ```bash
 cd <repo-root>
@@ -55,13 +55,13 @@ git commit -m "scout: brief <timestamp>"
 git push -u origin scout/<timestamp>
 ```
 
-4. If the user also approved the PR, run:
+4. Open the PR (both shipping options include it):
 
 ```bash
 gh pr create --base main --head scout/<timestamp> --title "scout: brief <timestamp>" --body "<one-line: focus + candidate count>"
 ```
 
-5. No second prompt — if the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
+5. No second prompt — if the user picked "Ship it", run `gh pr merge --squash --delete-branch`; otherwise leave the PR open for the user to merge on GitHub. Either way, finish on `main`:
 
 ```bash
 git switch main
