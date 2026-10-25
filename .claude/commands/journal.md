@@ -1,5 +1,5 @@
 ---
-description: Capture a free-form reflection, hesitation, imagined scenario, or road-not-taken decision into the Prism timeline. Always asks whether to link related research runs and tickers (portfolio / candidate / add-to-candidate), suggesting matches when possible. Appends to tracking/journal.json, regenerates the dashboard when due (once per trading day after the close), and lands the entry on its own journal/<id> branch + PR.
+description: Capture a free-form reflection, hesitation, imagined scenario, or road-not-taken decision into the Prism timeline. Always asks whether to link related research runs and tickers (held or not), suggesting matches when possible. Appends to tracking/journal.json, regenerates the dashboard when due (once per trading day after the close), and lands the entry on its own journal/<id> branch + PR.
 ---
 
 Capture a **journal entry** — a reflection, hesitation, imagined scenario, or a decision you could have made but didn't — into the Prism timeline so you can look back and reflect on your thinking process. This is the user's own thinking log; not advice, no boilerplate.
@@ -37,13 +37,13 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
    git switch -c journal/<YYYY-MM-DD>-<NNN>      # e.g. journal/2026-06-22-001
    ```
 
-   If the branch step fails, report and stop. Everything below — `journal.json`, any candidate add, dashboard regen — happens on this branch.
+   If the branch step fails, report and stop. Everything below — `journal.json`, dashboard regen — happens on this branch.
 
 3. **Suggest and confirm research links** — find research runs that might relate, and ask which (if any) to link. Always ask, even if nothing obvious matches.
 
    **Finding candidate runs**:
    - Scan the reflection text for ticker symbols and topic keywords.
-   - Read `tracking/positions-thesis.json` and `tracking/candidates.json`: any ticker mentioned in the text that has a `reports[]` array contributes those runs.
+   - For any ticker mentioned in the text, find runs that covered it: `grep -l` for `$<TICKER>` across `reports/*/final-report.md`.
    - Scan `reports/` directories (most recent first): surface runs whose slug or `question` frontmatter matches a keyword from the text, plus the 5 most recent runs regardless of match (recent thinking is often what a reflection is reacting to).
    - Deduplicate, sort by date descending, cap at 10.
 
@@ -73,25 +73,20 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
    **Finding candidate tickers**:
    - Extract ticker-like tokens from the reflection text (uppercase 1–5 letter symbols; also resolve obvious company names you recognize to their ticker).
-   - Tag each against tracking: `[PORTFOLIO]` if held per `brokerage-snapshot.json` (`symbol` values across `accounts[].positions[]` — the holdings source of truth, not the thesis overlay), `[CANDIDATE]` if in `candidates.json`, `[NEW]` otherwise.
+   - Tag each against tracking: `[PORTFOLIO]` if held per `brokerage-snapshot.json` (`symbol` values across `accounts[].positions[]` — the holdings source of truth), `[NEW]` otherwise.
    - Also offer any tickers from the research runs the user just linked in step 3.
 
    Present:
    ```
    Tickers you might link:
      1. MSFT  [PORTFOLIO]
-     2. NVDA  [CANDIDATE]
+     2. NVDA  [NEW]
      3. ASTS  [NEW]
    Link tickers (e.g. "1,2"), "all", or "none":
    ```
    - If none detected, ask `"Any tickers to link? (comma-separated symbols, or 'none')"`.
 
    **Parse the response** the same way (numbers / `all` / `none`). The result is `linked_tickers` — a flat array of symbols, e.g. `["MSFT", "NVDA"]`.
-
-   **Add-to-candidate prompt** — for every linked ticker tagged `[NEW]` (not in portfolio or candidates), ask per ticker:
-   `"<TICKER> isn't tracked. Add it to candidates.json? (y/n):"`
-   - If yes: append to `candidates.json` `entries[]`: `{ "ticker": "<TICKER>", "added_date": "<today>", "reports": [], "events": [] }`. Update that file's `last_updated`. (The ticker is still recorded in the entry's `linked_tickers` either way — adding to candidates just starts tracking it.)
-   - If no: leave it untracked; it stays in `linked_tickers`.
 
 5. **Confirm the entry** — show a one-line summary:
    ```
@@ -119,7 +114,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
 7. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (When regenerated, the entry appears as a violet node in the Timeline view.)
 
-8. **Ship gate** — the work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`, and `tracking/candidates.json` if a ticker was added) and the dashboard decision line.
+8. **Ship gate** — the work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`) and the dashboard decision line.
 
    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this journal entry?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
@@ -133,7 +128,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
    Stage, commit, push (the branch already exists). Include `dashboard/index.html` **only if it was regenerated**:
    ```bash
    cd <repo-root>
-   git add tracking/journal.json   # + dashboard/index.html if regenerated; + tracking/candidates.json if a ticker was added
+   git add tracking/journal.json   # + dashboard/index.html if regenerated
    git commit -m "journal: <date> (<id>)"
    git push -u origin journal/<YYYY-MM-DD>-<NNN>
    gh pr create --base main --head journal/<YYYY-MM-DD>-<NNN> --title "journal: <date> (<id>)" --body "<one line: first ~80 chars of the reflection + linked tickers/runs>"
@@ -156,10 +151,10 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 ## Examples
 
 `/journal hesitated on adding to NVDA before earnings — the AI-capex narrative felt fully priced and I didn't want to chase`
-→ Refine the rough thought into clearer prose → show it → user approves → cut branch `journal/2026-06-22-001` → suggest runs (NVDA-tagged + recent) and tickers (`NVDA [CANDIDATE]`) → user links a run + NVDA → confirm → append entry `journal-20260622-001` → ship gate → (dashboard regen if due) → commit + PR + merge.
+→ Refine the rough thought into clearer prose → show it → user approves → cut branch `journal/2026-06-22-001` → suggest runs (NVDA-tagged + recent) and tickers (`NVDA [NEW]`) → user links a run + NVDA → confirm → append entry `journal-20260622-001` → ship gate → (dashboard regen if due) → commit + PR + merge.
 
 `/journal so um like what if I'd just kept the whole SNAP position instead of rotating into RKLB and NOW, you know, want to revisit this in like 6 months`
-→ Refine to e.g. *"What if I'd kept the full SNAP position instead of rotating into RKLB and NOW? Want to revisit in 6 months."* → user approves → tickers detected: `SNAP [NEW]`, `RKLB [PORTFOLIO]`, `NOW [PORTFOLIO]` → user links all three → asked whether to add SNAP to candidates → records the road-not-taken reflection for later review.
+→ Refine to e.g. *"What if I'd kept the full SNAP position instead of rotating into RKLB and NOW? Want to revisit in 6 months."* → user approves → tickers detected: `SNAP [NEW]`, `RKLB [PORTFOLIO]`, `NOW [PORTFOLIO]` → user links all three → records the road-not-taken reflection for later review.
 
 `/journal`
 → no text given; the command asks what to record, then refines the reply before running.

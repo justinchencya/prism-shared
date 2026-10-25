@@ -343,7 +343,7 @@ def edgar_signals(edgar_cfg: dict, fts_terms: list, lookback_days: int, warnings
         records.extend(edgar_fts_to_records(data, term))
         time.sleep(0.3)
 
-    # Recent filings for watchlist tickers (name-level catalysts).
+    # Recent filings for the focus tickers (name-level catalysts).
     tickers = edgar_cfg.get("tickers") or []
     if tickers:
         try:

@@ -31,18 +31,6 @@ def load_trades() -> list:
     return data.get("trades", [])
 
 
-def load_theses() -> dict:
-    # positions-thesis.json is the thesis overlay (reports[]/events[] per name),
-    # not a holdings ledger — what's actually held lives in brokerage-snapshot.json.
-    data = load_json(TRACKING_DIR / "positions-thesis.json", {"positions": []})
-    return {p["ticker"]: p for p in data.get("positions", [])}
-
-
-def load_candidates() -> dict:
-    data = load_json(TRACKING_DIR / "candidates.json", {"entries": []})
-    return {e["ticker"]: e for e in data.get("entries", [])}
-
-
 def load_journal() -> list:
     data = load_json(TRACKING_DIR / "journal.json", {"entries": []})
     return data.get("entries", [])
@@ -92,59 +80,77 @@ def load_research_runs() -> list:
     return runs
 
 
-HORIZONS = ("long", "spec")
+# Verdicts are read straight from the research reports — no tracking file.
+# Formats accumulated over time, newest first: the final report's verdict
+# table (any table row whose first cell is a ticker and some cell carries a
+# verdict word), per-ticker headings ("### $NVDA — Buy"), and the per-ticker
+# deep dives' "Market verdict" line.
+VERDICT_WORD = re.compile(r"\b(Buy|Hold|Avoid|Accumulate|Sell|Trim|Watch)\b", re.I)
+TABLE_TICKER = re.compile(r"[*$`]*([A-Z0-9][A-Z0-9.\-]{0,7})\b")
+HEADING_VERDICT = re.compile(
+    r"^#{2,4} \$?([A-Z0-9][A-Z0-9.\-]{0,7})\b[^\n]*?[—\-:]\s*(?:Market verdict:?\s*)?\**(Buy|Hold|Avoid)\b", re.M)
+MARKET_VERDICT = re.compile(r"Market verdict\W{0,6}(Buy|Hold|Avoid)\b", re.I)
+# Share classes reported under either symbol.
+TICKER_ALIASES = {"GOOGL": "GOOG", "BRK.B": "BRK-B"}
 
 
-def validate_horizons(theses: dict, candidates: dict) -> list:
-    """Every reports[]/events[] entry must carry horizon "long" or "spec"."""
-    problems = []
-    for fname, entries in (("positions-thesis.json", theses), ("candidates.json", candidates)):
-        for ticker, entry in entries.items():
-            for kind in ("reports", "events"):
-                for item in entry.get(kind, []):
-                    if item.get("horizon") not in HORIZONS:
-                        label = item.get("run") or item.get("id") or "?"
-                        problems.append(f"{fname} {ticker} {kind}[] {label}: horizon={item.get('horizon')!r}")
-    return problems
+def _norm_ticker(t: str) -> str:
+    return TICKER_ALIASES.get(t, t)
 
 
-def build_horizon_lookup(theses: dict, candidates: dict) -> dict:
-    """Build {(ticker, run): horizon} from thesis and candidates reports[]."""
-    return {(ticker, r["run"]): r["horizon"]
-            for ticker, entry in {**theses, **candidates}.items()
-            for r in entry.get("reports", []) if r.get("run")}
+def parse_run_verdicts(run_dir: Path) -> dict:
+    """{ticker: Market verdict} for one research run."""
+    out = {}
+    fr = run_dir / "final-report.md"
+    text = fr.read_text() if fr.exists() else ""
+    market_col = None   # index of the header's "Market" column, when the table has one
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            market_col = None
+            continue
+        if set(line) <= set("|-: "):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        m = TABLE_TICKER.match(cells[0])
+        if not m or not re.search("[A-Z]", m.group(1)) or m.group(1).upper() == "TICKER":
+            if m and m.group(1).upper() == "TICKER":
+                market_col = next((i for i, c in enumerate(cells) if c.lower().startswith("market")), None)
+            continue
+        cols = [cells[market_col]] if market_col is not None and market_col < len(cells) else cells[1:]
+        v = next((VERDICT_WORD.search(c) for c in cols if VERDICT_WORD.search(c)), None)
+        if v:
+            out.setdefault(_norm_ticker(m.group(1)), v.group(1).title())
+    for m in HEADING_VERDICT.finditer(text):
+        out.setdefault(_norm_ticker(m.group(1)), m.group(2).title())
+    for tf in sorted((run_dir / "tickers").glob("*.md")) if (run_dir / "tickers").is_dir() else []:
+        m = MARKET_VERDICT.search(tf.read_text())
+        if m:
+            out.setdefault(_norm_ticker(tf.stem), m.group(1).title())
+    return out
 
 
-def build_run_horizons(runs: list, theses: dict, candidates: dict) -> dict:
-    """{run slug: horizon}. The run's plan.md `horizon:` line wins; runs that
-    predate it fall back to the horizon stamped on their tracking entries, then
-    to "long" (every earlier run was judged on the long-term stance)."""
-    stamped = {}
-    for entry in {**theses, **candidates}.values():
-        for r in entry.get("reports", []):
-            if r.get("run") and r.get("horizon") in HORIZONS:
-                stamped.setdefault(r["run"], r["horizon"])
-    result = {}
-    for run in runs:
-        plan = REPORTS_DIR / run["slug"] / "plan.md"
-        m = re.search(r"^\W*horizon\W*:\W*(long|spec)\b", plan.read_text(), re.I | re.M) if plan.exists() else None
-        result[run["slug"]] = m.group(1).lower() if m else stamped.get(run["slug"], "long")
-    return result
-
-
-def _link_horizon(horizon_lookup: dict | None, run_horizons: dict | None, ticker: str, run: str | None):
-    """A linked run's horizon: the ticker-level entry if one exists, else the run's own."""
-    return (horizon_lookup or {}).get((ticker, run)) or (run_horizons or {}).get(run)
-
-
-def build_verdict_lookup(theses: dict, candidates: dict) -> dict:
-    """Build {(ticker, run): verdict} from thesis and candidates reports[]."""
+def build_verdict_lookup(runs: list) -> dict:
+    """{(ticker, run slug): Market verdict} across every research run."""
     lookup = {}
-    for ticker, entry in {**theses, **candidates}.items():
-        for r in entry.get("reports", []):
-            if r.get("run") and r.get("verdict"):
-                lookup[(ticker, r["run"])] = r["verdict"]
+    for r in runs:
+        for ticker, verdict in parse_run_verdicts(REPORTS_DIR / r["slug"]).items():
+            lookup[(ticker, r["slug"])] = verdict
     return lookup
+
+
+def resolve_run(run: str | None, slugs: set) -> str | None:
+    """A linked run's report dir. Some older links dropped the date prefix."""
+    if not run or run in slugs:
+        return run
+    dated = sorted(s for s in slugs if s[11:] == run)
+    return dated[-1] if dated else run
+
+
+def _link_verdict(link: dict, ticker: str, verdict_lookup: dict | None, slugs: set) -> str | None:
+    """The verdict snapshotted on the trade link wins; else read it from the report."""
+    if link.get("market_verdict"):
+        return link["market_verdict"]
+    return (verdict_lookup or {}).get((_norm_ticker(ticker), resolve_run(link.get("run"), slugs)))
 
 
 # Tracking symbols that differ from their Yahoo Finance quote symbol.
@@ -290,24 +296,17 @@ def fetch_price_history(tickers: set, start_date: str) -> dict:
 # Data transformation
 # ---------------------------------------------------------------------------
 
-def build_timeline(runs: list, trades: list, journal: list | None = None, verdict_lookup: dict | None = None,
-                   horizon_lookup: dict | None = None, run_horizons: dict | None = None) -> list:
-    run_horizons = run_horizons or {}
+def build_timeline(runs: list, trades: list, journal: list | None = None, verdict_lookup: dict | None = None) -> list:
+    slugs = {r["slug"] for r in runs}
     events = []
     for r in runs:
-        events.append({"type": "research", **r, "horizon": run_horizons.get(r["slug"])})
+        events.append({"type": "research", **r})
     for j in (journal or []):
-        links = [{**l, "horizon": run_horizons.get(l.get("run"))} for l in j.get("linked_research", [])]
-        events.append({"type": "journal", **j, "linked_research": links})
+        events.append({"type": "journal", **j})
     for t in trades:
         ticker = t["ticker"]
-        enriched_links = []
-        for link in t.get("linked_research", []):
-            verdict = link.get("market_verdict")
-            if verdict is None and verdict_lookup:
-                verdict = verdict_lookup.get((ticker, link.get("run")))
-            horizon = _link_horizon(horizon_lookup, run_horizons, ticker, link.get("run"))
-            enriched_links.append({**link, "market_verdict": verdict, "horizon": horizon})
+        enriched_links = [{**link, "market_verdict": _link_verdict(link, ticker, verdict_lookup, slugs)}
+                          for link in t.get("linked_research", [])]
         events.append({"type": "trade", **t, "linked_research": enriched_links})
     events.sort(key=lambda e: e["date"])
     return events
@@ -335,8 +334,9 @@ def _days_lag(trade_date: str, research_date: str) -> int | None:
 
 
 def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: dict | None = None,
-                    horizon_lookup: dict | None = None, run_horizons: dict | None = None) -> list:
+                    slugs: set | None = None) -> list:
     prices = prices or {}
+    slugs = slugs or set()
     rows = []
     for trade in trades:
         links = trade.get("linked_research", [])
@@ -368,14 +368,11 @@ def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: di
         else:
             link_details = []
             for link in links:
-                verdict = link.get("market_verdict")
-                if verdict is None and verdict_lookup:
-                    verdict = verdict_lookup.get((ticker, link.get("run")))
+                verdict = _link_verdict(link, ticker, verdict_lookup, slugs)
                 link_details.append({
                     "run": link.get("run"),
                     "date": link.get("date"),
                     "verdict": verdict,
-                    "horizon": _link_horizon(horizon_lookup, run_horizons, ticker, link.get("run")),
                     "alignment": _alignment(trade["action"], verdict),
                     "days_lag": _days_lag(trade["date"], link.get("date", "")),
                 })
@@ -410,6 +407,10 @@ def build_value_series(trades: list, history: dict) -> dict:
     matching needed at this level. A ticker whose trades lack shares/price, or
     with no price history, can't be valued; it is excluded entirely (both
     lines) and reported in "excluded" so the chart can say so.
+
+    Trades are grouped by position — `position` when set (what-if swaps keep
+    their swapped-in shares apart from the real lots of the same ticker), else
+    `ticker` — and priced with `ticker`'s history.
     """
     dated = sorted((t for t in trades if t.get("date")), key=lambda t: t["date"])
     if not dated:
@@ -418,44 +419,47 @@ def build_value_series(trades: list, history: dict) -> dict:
     def complete(t):
         return bool(t.get("shares") and t.get("price_per_share"))
 
-    all_tickers = {t["ticker"] for t in dated}
+    def pos(t):
+        return t.get("position") or t["ticker"]
+
+    price_ticker = {pos(t): t["ticker"] for t in dated}
     bad = {}
     for t in dated:
         if not complete(t):
-            bad.setdefault(t["ticker"], "missing shares/price on some trades")
-    for tk in all_tickers:
-        if tk not in bad and tk not in history:
-            bad[tk] = "no price history"
-    # a ticker whose recorded sells exceed its recorded buys held shares from
+            bad.setdefault(pos(t), "missing shares/price on some trades")
+    for p, tk in price_ticker.items():
+        if p not in bad and tk not in history:
+            bad[p] = "no price history"
+    # a position whose recorded sells exceed its recorded buys held shares from
     # before the trade log began — its proceeds would fake the net-invested
     # line (return of unrecorded principal reads as P&L), so drop it whole
     running = {}
     for t in dated:
-        tk = t["ticker"]
-        if tk in bad:
+        p = pos(t)
+        if p in bad:
             continue
         sign = 1 if t["action"] in ("buy", "add") else -1
-        running[tk] = running.get(tk, 0) + sign * t["shares"]
-        if running[tk] < -1e-9:
-            bad[tk] = "sells exceed recorded buys (position predates trade log)"
-    usable = [t for t in dated if t["ticker"] not in bad]
+        running[p] = running.get(p, 0) + sign * t["shares"]
+        if running[p] < -1e-9:
+            bad[p] = "sells exceed recorded buys (position predates trade log)"
+    usable = [t for t in dated if pos(t) not in bad]
     excluded = [{"ticker": k, "reason": v} for k, v in sorted(bad.items())]
     if not usable:
         return {"series": [], "excluded": excluded}
 
     first_date = usable[0]["date"]
-    calendar = sorted({d for tk in {t["ticker"] for t in usable}
-                       for d in history[tk]})
+    held_positions = {pos(t) for t in usable}
+    calendar = sorted({d for p in held_positions for d in history[price_ticker[p]]})
     # forward-fill closes onto the union calendar (crypto trades weekends,
     # equities don't — every ticker needs a close on every calendar day)
     filled = {}
-    for tk in {t["ticker"] for t in usable}:
+    for p in held_positions:
         last = None
         col = {}
         for d in calendar:
-            last = history[tk].get(d, last)
+            last = history[price_ticker[p]].get(d, last)
             col[d] = last
-        filled[tk] = col
+        filled[p] = col
 
     series = []
     shares_held = {}
@@ -467,15 +471,15 @@ def build_value_series(trades: list, history: dict) -> dict:
         while idx < len(usable) and usable[idx]["date"] <= d:
             t = usable[idx]
             sign = 1 if t["action"] in ("buy", "add") else -1
-            shares_held[t["ticker"]] = shares_held.get(t["ticker"], 0) + sign * t["shares"]
+            shares_held[pos(t)] = shares_held.get(pos(t), 0) + sign * t["shares"]
             invested += sign * t["shares"] * t["price_per_share"]
             idx += 1
         value = 0.0
         ok = True
-        for tk, sh in shares_held.items():
+        for p, sh in shares_held.items():
             if sh <= 1e-9:
                 continue
-            close = filled[tk].get(d)
+            close = filled[p].get(d)
             if close is None:
                 ok = False  # held before its first close (pre-IPO gap) — skip day
                 break
@@ -610,19 +614,28 @@ def resolve_scenario_trades(scenario: dict, actual_trades: list, history: dict) 
             sh = frac * hyp_shares[key]
             orig_shares[key] = held - t["shares"]
             hyp_shares[key] -= sh
-        out.append({"ticker": tgt, "date": t["date"], "action": t["action"],
+        out.append({"ticker": tgt, "position": f"{tgt} (for {t['ticker']})",
+                    "date": t["date"], "action": t["action"],
                     "shares": sh, "price_per_share": close,
                     "amount_usd": round(sh * close, 2)})
     return out, warnings
 
 
-def build_whatif_series(scenarios: list, actual_trades: list, history: dict) -> list:
-    """Value series per scenario, in the shape the chart overlays expect."""
+def build_whatif_series(scenarios: list, actual_trades: list, history: dict,
+                        actual_excluded: list | None = None) -> list:
+    """Value series per scenario, in the shape the chart overlays expect.
+
+    A scenario's exclusions that the actual portfolio shares (same ticker, same
+    reason) are already reported once for the actual line, so only the
+    scenario-specific ones become warnings.
+    """
+    shared = {(e["ticker"], e["reason"]) for e in (actual_excluded or [])}
     out = []
     for sc in scenarios:
         trades, warnings = resolve_scenario_trades(sc, actual_trades, history)
         vs = build_value_series(trades, history)
-        warnings += [f"{e['ticker']}: {e['reason']}" for e in vs["excluded"]]
+        warnings += [f"{e['ticker']}: {e['reason']}" for e in vs["excluded"]
+                     if (e["ticker"], e["reason"]) not in shared]
         ci = sc.get("color_index")
         if ci is None:
             ci = len(out)
@@ -689,19 +702,20 @@ def build_pnl_drivers(trades: list, prices: dict, alignment_rows: list) -> list:
 
 
 def build_per_ticker(
-    theses: dict,
-    candidates: dict,
+    verdict_lookup: dict,
+    runs: list,
     trades: list,
     prices: dict,
 ) -> dict:
     tickers = set(t["ticker"] for t in trades)
+    run_dates = {r["slug"]: r["date"] for r in runs}
     result = {}
     for ticker in sorted(tickers):
         ticker_trades = [t for t in trades if t["ticker"] == ticker]
-        holding = theses.get(ticker) or candidates.get(ticker) or {}
-        research_history = holding.get("reports", [])
-        events = sorted((e for e in holding.get("events", []) if e.get("status", "active") == "active"),
-                        key=lambda e: e.get("added", ""), reverse=True)
+        research_history = sorted(
+            ({"run": run, "date": run_dates.get(run, ""), "verdict": verdict}
+             for (tk, run), verdict in verdict_lookup.items() if tk == _norm_ticker(ticker)),
+            key=lambda r: r["date"], reverse=True)
 
         # P&L calculation
         pnl_pct = None
@@ -723,10 +737,8 @@ def build_per_ticker(
             "ticker": ticker,
             "trades": ticker_trades,
             "research_history": research_history,
-            "events": events,
             "current_price": current_price,
             "pnl_pct": pnl_pct,
-            "has_thesis": ticker in theses,
         }
     return result
 
@@ -773,9 +785,6 @@ h3 { font-size: 14px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; }
 .badge.trim { background: #3b2800; color: #fb923c; }
 .badge.add { background: #064e3b; color: #34d399; }
 .badge.research { background: #1e3a5f; color: #60a5fa; }
-.badge.hz { font-size: 10px; text-transform: none; margin-left: 4px; }
-.badge.hz-long { background: #1e293b; color: #94a3b8; }
-.badge.hz-spec { background: #3b2800; color: #fbbf24; }
 .badge.journal { background: #2e1065; color: #c4b5fd; }
 .badge.ticker { background: #1e293b; color: #94a3b8; }
 .badge.investable { background: #312e81; color: #a5b4fc; }
@@ -817,9 +826,6 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
 .pnl-negative { color: #fb7185; font-weight: 600; }
 .price-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
 .price-label { color: #64748b; }
-.event-item { padding: 6px 0; border-bottom: 1px solid #2d3148; font-size: 12px; }
-.event-item:last-child { border-bottom: none; }
-.event-type { font-size: 10px; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
 
 /* P&L tab */
 .kpi-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -845,6 +851,16 @@ tr.unlinked td:first-child { border-left: 3px solid #334155; }
 .chart-tooltip .tt-val { font-weight: 600; color: #f1f5f9;
                          font-variant-numeric: tabular-nums; }
 .muted-note { color: #64748b; font-size: 12px; padding: 8px 0; }
+.muted-note.fold summary { cursor: pointer; }
+.muted-note.fold div { margin-top: 4px; }
+.whatif-picker { display: inline-block; position: relative; margin-bottom: 10px; font-size: 12px; color: #94a3b8; }
+.whatif-picker summary { cursor: pointer; padding: 5px 10px; border: 1px solid #3d4166; border-radius: 6px; list-style: none; }
+.whatif-picker summary::after { content: ' ▾'; }
+.whatif-menu { position: absolute; z-index: 6; margin-top: 4px; background: #232842; border: 1px solid #3d4166;
+               border-radius: 6px; padding: 6px 4px; min-width: 240px; box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.whatif-menu label { display: flex; align-items: center; gap: 6px; padding: 4px 8px; cursor: pointer; color: #e2e8f0; }
+.whatif-menu label:hover { background: #2d3148; border-radius: 4px; }
+.whatif-menu .key { display: inline-block; width: 14px; height: 2px; }
 svg text { font-family: inherit; }
 .axis-tick { font-size: 10px; fill: #64748b; font-variant-numeric: tabular-nums; }
 .bar-label { font-size: 11px; fill: #e2e8f0; font-variant-numeric: tabular-nums; }
@@ -894,18 +910,62 @@ function renderPnlTab() {
 }
 
 function renderValueChart() {
+  // Default view: the actual portfolio only. What-if scenarios are opt-in via
+  // the "Compare with what-if" dropdown; each pick redraws the chart.
   const card = document.getElementById('pnl-value-card');
   const s = DATA.pnl_series.series || [];
   const excluded = DATA.pnl_series.excluded || [];
-  const hasActual = s.length >= 2;
   const scen = (DATA.whatif || []).filter(w => w.series && w.series.length >= 2);
+  const picker = scen.length ? `
+    <details class="whatif-picker">
+      <summary>Compare with what-if: <span id="whatif-picked">none</span></summary>
+      <div class="whatif-menu">${scen.map((w, k) => `<label><input type="checkbox" value="${k}">
+        <span class="key" style="background:repeating-linear-gradient(90deg,${w.color} 0 5px,transparent 5px 8px)"></span>${esc(w.name)}</label>`).join('')}</div>
+    </details>` : '';
+  // exclusions grouped by reason, folded into one line
+  const byReason = {};
+  excluded.forEach(e => { (byReason[e.reason] = byReason[e.reason] || []).push(e.ticker); });
+  const note = excluded.length ? `
+    <details class="muted-note fold"><summary>${excluded.length} ticker${excluded.length > 1 ? 's' : ''} left out of the value line</summary>
+      ${Object.entries(byReason).map(([r, ts]) => `<div><b>${esc(r)}</b>: ${ts.map(esc).join(', ')}</div>`).join('')}
+    </details>` : '';
+  card.insertAdjacentHTML('beforeend', picker + '<div id="pnl-value-body"></div>' + note);
+
+  const inputs = [...card.querySelectorAll('.whatif-menu input')];
+  const redraw = () => {
+    const chosen = inputs.filter(i => i.checked).map(i => scen[+i.value]);
+    const label = document.getElementById('whatif-picked');
+    if (label) label.textContent = chosen.length ? chosen.map(w => w.name).join(', ') : 'none';
+    drawValueChart(card, s, chosen);
+  };
+  inputs.forEach(i => i.addEventListener('change', redraw));
+  redraw();
+
+  // KPI tiles from the latest actual point
+  if (s.length < 2) return;
+  const last = s[s.length - 1];
+  const pnl = last.value - last.invested;
+  const pct = last.invested ? pnl / last.invested * 100 : null;
+  document.getElementById('kpi-value').textContent = fmtUsd(last.value);
+  document.getElementById('kpi-invested').textContent = fmtUsd(last.invested);
+  const kp = document.getElementById('kpi-pnl');
+  kp.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
+  kp.className = 'value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+  if (pct != null) {
+    const kd = document.getElementById('kpi-pnl-delta');
+    kd.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% on net invested';
+    kd.className = 'delta ' + (pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+  }
+}
+
+function drawValueChart(card, s, scen) {
+  const body = document.getElementById('pnl-value-body');
+  const hasActual = s.length >= 2;
+  // only scenario-specific warnings (shared exclusions are already in the fold below)
   const scenWarn = scen.flatMap(w => (w.warnings || []).map(m => esc(w.name) + ': ' + esc(m)));
-  let note = excluded.length
-    ? `<div class="muted-note">Excluded: ${excluded.map(e => esc(e.ticker) + ' (' + esc(e.reason) + ')').join(', ')}</div>` : '';
-  if (scenWarn.length) note += `<div class="muted-note">What-if notes: ${scenWarn.join(' · ')}</div>`;
+  const warn = scenWarn.length ? `<div class="muted-note">What-if notes: ${scenWarn.join(' · ')}</div>` : '';
   if (!hasActual && !scen.length) {
-    card.insertAdjacentHTML('beforeend',
-      '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>' + note);
+    body.innerHTML = '<div class="muted-note">Not enough data for a value series — needs trades with shares + price and reachable price history.</div>';
     return;
   }
   // x-domain: the actual portfolio's calendar; hypotheticals-only fallback
@@ -981,7 +1041,7 @@ function renderValueChart() {
     return `<div class="muted-note"><span class="key" style="background:${v.color};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:6px"></span>${esc(v.name)}: ${fmtUsd(lp.value, true)} (P&amp;L ${fmtSigned(pnl)}${vsActual})</div>`;
   }).join('');
 
-  card.insertAdjacentHTML('beforeend', `
+  body.innerHTML = (`
     <div class="chart-legend">${legend}</div>
     <svg width="${W}" height="${H}" role="img" aria-label="Portfolio value vs net invested over time, with what-if scenario overlays">
       ${grid}${xlabels}
@@ -991,7 +1051,7 @@ function renderValueChart() {
       <line id="pnl-crosshair" y1="${M.top}" y2="${M.top + ph}" stroke="#3d4166" stroke-width="1" visibility="hidden"/>
       <rect x="${M.left}" y="${M.top}" width="${pw}" height="${ph}" fill="transparent" id="pnl-hover"/>
     </svg>
-    <div class="chart-tooltip" id="pnl-tt"></div>` + summary + note);
+    <div class="chart-tooltip" id="pnl-tt"></div>` + summary + warn);
 
   const scenMaps = scenView.map(v => {
     const m = {};
@@ -999,7 +1059,7 @@ function renderValueChart() {
     return m;
   });
   const ttKey = c => `<span class="key" style="background:${c};display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px"></span>`;
-  const svgEl = card.querySelector('svg');
+  const svgEl = body.querySelector('svg');
   const hover = document.getElementById('pnl-hover');
   const cross = document.getElementById('pnl-crosshair');
   const tt = document.getElementById('pnl-tt');
@@ -1033,20 +1093,6 @@ function renderValueChart() {
     cross.setAttribute('visibility', 'hidden'); tt.style.display = 'none';
   });
 
-  // KPI tiles from the latest actual point
-  if (!hasActual) return;
-  const pnl = last.value - last.invested;
-  const pct = last.invested ? pnl / last.invested * 100 : null;
-  document.getElementById('kpi-value').textContent = fmtUsd(last.value);
-  document.getElementById('kpi-invested').textContent = fmtUsd(last.invested);
-  const kp = document.getElementById('kpi-pnl');
-  kp.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
-  kp.className = 'value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-  if (pct != null) {
-    const kd = document.getElementById('kpi-pnl-delta');
-    kd.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% on net invested';
-    kd.className = 'delta ' + (pct >= 0 ? 'pnl-positive' : 'pnl-negative');
-  }
 }
 
 function renderDriversChart() {
@@ -1137,11 +1183,6 @@ function sortTable(col) {
   renderAlignmentRows(rows);
 }
 
-// Horizon chip next to any research run or verdict: long (muted) / spec (amber).
-function horizonTag(h) {
-  return h ? `<span class="badge hz hz-${h}" title="horizon">${h}</span>` : '';
-}
-
 function renderAlignmentRows(rows) {
   const tbody = document.getElementById('align-tbody');
   tbody.innerHTML = rows.map(r => {
@@ -1151,7 +1192,7 @@ function renderAlignmentRows(rows) {
           const slug = l.run ? l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '') : '?';
           const lag = l.days_lag != null ? ` <span style="color:#64748b">${l.days_lag}d</span>` : '';
           const verdict = l.verdict ? ` <span class="badge ${l.verdict.toLowerCase()}" style="font-size:10px">${l.verdict}</span>` : '';
-          return `<div style="white-space:nowrap" title="${l.run||''}">${slug}${verdict}${horizonTag(l.horizon)}${lag}</div>`;
+          return `<div style="white-space:nowrap" title="${l.run||''}">${slug}${verdict}${lag}</div>`;
         }).join('');
     let pnlHtml = '—';
     if (r.pnl_pct != null) {
@@ -1183,12 +1224,12 @@ function renderTimeline() {
         <div class="tl-card">
           <div class="date">${e.date} &mdash; research</div>
           <div class="title">${e.question}</div>
-          <div class="meta"><span class="badge research">${e.slug.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${horizonTag(e.horizon)}${inv}</div>
+          <div class="meta"><span class="badge research">${e.slug.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${inv}</div>
         </div></div>`;
     } else if (e.type === 'journal') {
       const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const runBadges = (e.linked_research||[]).map(l =>
-        `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${horizonTag(l.horizon)}`).join(' ');
+        `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>`).join(' ');
       const tickerBadges = (e.linked_tickers||[]).map(t =>
         `<span class="badge ticker">${t}</span>`).join(' ');
       const links = (runBadges || tickerBadges)
@@ -1204,7 +1245,7 @@ function renderTimeline() {
       const links = (e.linked_research||[]).map(l => {
         const v = l.market_verdict;
         const vBadge = v ? ` <span class="badge ${v.toLowerCase()}" style="font-size:10px">${v}</span>` : ' <span style="color:#64748b;font-size:10px">?</span>';
-        return `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${vBadge}${horizonTag(l.horizon)}`;
+        return `<span class="badge research" title="${l.run}">${l.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</span>${vBadge}`;
       }).join(' ');
       const price = e.price_per_share ? ` @ $${e.price_per_share}` : '';
       return `<div class="tl-item trade"><div class="tl-dot"></div>
@@ -1233,10 +1274,7 @@ function renderTicker(ticker) {
 
   const researchHtml = d.research_history.map(r =>
     `<tr><td>${r.date}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.run}">${r.run.replace(/^\\d{4}-\\d{2}-\\d{2}-/, '')}</td>
-     <td><span class="badge ${(r.verdict||'').toLowerCase()}">${r.verdict||'—'}</span>${horizonTag(r.horizon)}</td></tr>`).join('');
-
-  const eventsHtml = d.events.map(ev =>
-    `<div class="event-item"><div class="event-type">${ev.type||''}${horizonTag(ev.horizon)}</div><div>${ev.condition||''}</div></div>`).join('') || '<div style="color:#64748b;font-size:12px">No active events</div>';
+     <td><span class="badge ${(r.verdict||'').toLowerCase()}">${r.verdict||'—'}</span></td></tr>`).join('');
 
   document.getElementById('ticker-panel').innerHTML = `
     <div class="ticker-panel">
@@ -1244,7 +1282,6 @@ function renderTicker(ticker) {
         <div class="panel-card" style="margin-bottom:12px">
           <h3>Position</h3>
           ${priceBlock}
-          <div style="margin-top:8px;color:#64748b;font-size:12px">${d.has_thesis ? 'Thesis on file' : 'No active thesis'}</div>
         </div>
         <div class="panel-card">
           <h3>Trade History</h3>
@@ -1255,16 +1292,12 @@ function renderTicker(ticker) {
         </div>
       </div>
       <div>
-        <div class="panel-card" style="margin-bottom:12px">
+        <div class="panel-card">
           <h3>Research History</h3>
           <div class="tbl-wrap"><table>
             <thead><tr><th>Date</th><th>Run</th><th>Verdict</th></tr></thead>
             <tbody>${researchHtml || '<tr><td colspan="3" style="color:#64748b">No research history</td></tr>'}</tbody>
           </table></div>
-        </div>
-        <div class="panel-card">
-          <h3>Active Events / Falsifiers</h3>
-          ${eventsHtml}
         </div>
       </div>
     </div>`;
@@ -1464,21 +1497,9 @@ def main():
 
     print("Loading data…")
     trades = load_trades()
-    theses = load_theses()
-    candidates = load_candidates()
     runs = load_research_runs()
     journal = load_journal()
     hypotheticals = load_hypotheticals()
-
-    problems = validate_horizons(theses, candidates)
-    if problems:
-        print(f"ERROR: {len(problems)} tracking entries lack a valid horizon (\"long\" | \"spec\"):")
-        for line in problems[:20]:
-            print(f"  {line}")
-        if len(problems) > 20:
-            print(f"  … and {len(problems) - 20} more")
-        print("Set horizon on these entries in tracking/ (schema: tracking/README.md) and rerun.")
-        sys.exit(1)
 
     if preview:
         # preview targets one scenario, active or not — no HTML is written
@@ -1504,7 +1525,7 @@ def main():
     history = fetch_price_history(hist_tickers, hist_start) if hist_start else {}
 
     pnl_series = build_value_series(trades, history)
-    whatif = build_whatif_series(scenarios, trades, history)
+    whatif = build_whatif_series(scenarios, trades, history, pnl_series["excluded"])
 
     if preview:
         print_whatif_preview(whatif, pnl_series)
@@ -1516,12 +1537,10 @@ def main():
         print(f"Fetching current prices for: {', '.join(sorted(priced_tickers))}")
     prices = fetch_current_prices(priced_tickers)
 
-    verdict_lookup = build_verdict_lookup(theses, candidates)
-    horizon_lookup = build_horizon_lookup(theses, candidates)
-    run_horizons = build_run_horizons(runs, theses, candidates)
-    timeline = build_timeline(runs, trades, journal, verdict_lookup, horizon_lookup, run_horizons)
-    alignment = build_alignment(trades, verdict_lookup, prices, horizon_lookup, run_horizons)
-    per_ticker = build_per_ticker(theses, candidates, trades, prices)
+    verdict_lookup = build_verdict_lookup(runs)
+    timeline = build_timeline(runs, trades, journal, verdict_lookup)
+    alignment = build_alignment(trades, verdict_lookup, prices, {r["slug"] for r in runs})
+    per_ticker = build_per_ticker(verdict_lookup, runs, trades, prices)
     pnl_drivers = build_pnl_drivers(trades, prices, alignment)
 
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)

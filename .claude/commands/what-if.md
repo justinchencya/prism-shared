@@ -61,7 +61,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
 
    Set the `preview` of both shipping options to the scenario summary + preview numbers from step 5 (or the management action) plus the dashboard decision line.
 
-   **If the user picks "Don't commit"**, return to `main` and drop the branch: `git switch main && git branch -D whatif/<YYYY-MM-DD>-<NNN>` (the edit stays in the working tree; nothing was pushed). Report and stop. Otherwise, **if the decision was `regenerate`** (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now, before staging (the scenario renders as a dashed overlay line on the P&L chart); report any error but don't block the commit.
+   **If the user picks "Don't commit"**, return to `main` and drop the branch: `git switch main && git branch -D whatif/<YYYY-MM-DD>-<NNN>` (the edit stays in the working tree; nothing was pushed). Report and stop. Otherwise, **if the decision was `regenerate`** (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now, before staging (the scenario then appears in the P&L chart's "Compare with what-if" dropdown); report any error but don't block the commit.
 
    ```bash
    git add tracking/hypotheticals.json   # + dashboard/index.html if regenerated
