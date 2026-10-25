@@ -194,6 +194,7 @@ Mandatory checks for ticker reports:
 - If Thesis = Support but Market ≠ Buy, does the report clearly explain *why* (priced in, heroic assumptions, etc.) with sourced valuation evidence?
 - Are current price and key valuation multiples sourced with retrieval dates?
 - Is the verdict judged on the horizon the question implies (long-term by default) — not a multi-year bar applied to a trade question, or vice versa?
+- **Setup & key levels**: does the Market verdict weigh the technical setup alongside valuation (per researcher Step 3c), are the key levels (add zone, reclaim, break, overhead) concrete prices with what makes each one real, is the chart embedded, and does the visual cross-check exist? Spot-check one or two levels against `ticker_stats_<TICKER>.json` and the chart yourself. Reject any claim that institutions are selling unless 13F or a filing backs it.
 
 ### Phase 7 — Synthesize (final report)
 
@@ -224,10 +225,10 @@ investable: <yes/no>
 # Verdict table
 <Investable runs only — omit this whole section for non-investable runs. One row per ticker that has a `### $TICKER` subsection below. At-a-glance scan; the per-ticker subsections carry the full reasoning.>
 
-| Ticker | What it does | Thesis | Market | Reasoning |
-|---|---|---|---|---|
-| $TICKER1 `[BADGE]` | <≤8 words: the business in plain terms> | Support / Weaken / Inconclusive | Buy / Hold / Avoid | <one phrase: the load-bearing why behind the market verdict> |
-| $TICKER2 `[BADGE]` | ... | ... | ... | ... |
+| Ticker | What it does | Thesis | Market | Reasoning | Key levels |
+|---|---|---|---|---|---|
+| $TICKER1 `[BADGE]` | <≤8 words: the business in plain terms> | Support / Weaken / Inconclusive | Buy / Hold / Avoid | <one phrase: the load-bearing why behind the market verdict> | <compact: `add $A–B · break $D · reclaim $C`> |
+| $TICKER2 `[BADGE]` | ... | ... | ... | ... | ... |
 
 <Rows must match the `### $TICKER` subsections exactly — same tickers, same verdicts, same badges. The table is a digest, not a place for any claim that isn't already in a ticker subsection.>
 
@@ -246,6 +247,7 @@ Badge rule: `[PORTFOLIO]` if the ticker is in `portfolio_tickers`, `[CANDIDATE]`
 - **Why this ticker is in this report**: One sentence — explicit tie from the run's central question to this specific company's business (e.g., "SpaceX IPO re-rates the listed-space comp set; VSAT is the public MSS-spectrum operator most directly comped against Starlink.").
 - **Thesis verdict**: Support / Weaken / Inconclusive — one line.
 - **Market verdict**: Buy / Hold / Avoid — one line. If Thesis=Support but Market≠Buy, explicitly say why (e.g., "priced in at $X for the next 12 months and still attractive on a 5-year hold given Y" → Buy; "priced for perfection that even base-case multi-year execution can't justify" → Hold/Avoid).
+- **Key levels** (from the ticker report, with the close date): add zone $A–$B · reclaim $C · break $D (no new buys below it; exit if held as a trade) · overhead $E — one line, plus the trend in a few words and a link to the chart (`tickers/chart_<TICKER>.png`).
 - Load-bearing claims (what has to be true), key numbers + valuation context, falsifiers — 3–6 bullets max. $TICKER inline refs to the ticker report file.
 
 ### $TICKER2 — <verdict>
@@ -352,7 +354,7 @@ Update `last_updated` in each modified file to today's date. Do not perform any 
 Reply with **only**:
 
 1. Absolute path to `final-report.md` AND show the file to the user directly if possible
-2. **Verdict table** (investable runs only): reproduce the `# Verdict table` from the final report verbatim in the reply — tickers, what each company does, Thesis + Market verdicts, one-phrase reasoning. This is the one part of the synthesis you DO surface inline; the user always wants it at a glance. Omit entirely for non-investable runs.
+2. **Verdict table** (investable runs only): reproduce the `# Verdict table` from the final report verbatim in the reply — tickers, what each company does, Thesis + Market verdicts, one-phrase reasoning, key levels. This is the one part of the synthesis you DO surface inline; the user always wants it at a glance. Omit entirely for non-investable runs.
 3. Round-1 bundle count.
 4. Ticker count (or "none — not investable").
 5. Revision rounds actually run (split: round-1 / ticker).
