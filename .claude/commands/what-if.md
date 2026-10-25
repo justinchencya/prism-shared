@@ -4,7 +4,7 @@ description: Create and manage hypothetical "what-if" portfolio scenarios — co
 
 Create or manage a **what-if scenario** — a hypothetical portfolio computed from daily closes and overlaid on the dashboard's P&L value chart next to the actual portfolio. This is counterfactual comparison of concrete trade histories ("what if I'd bought AMD instead of NVDA?", "what if I'd just DCA'd into SPY?"), **not** strategy backtesting — no rebalancing rules, no dividends, no intraday fills. Directional sanity-checking, not precise P&L.
 
-A what-if run does **no** research and writes **no** Notion. It edits `tracking/hypotheticals.json` (schema in `tracking/README.md`), optionally regenerates the dashboard (user-gated at commit time), and lands on its own branch + PR (same git flow as `/journal`).
+A what-if run does **no** research and writes **no** Notion. It edits `tracking/hypotheticals.json` (schema in `tracking/README.md`), regenerates the dashboard when `scripts/dashboard_due.py` says it's due, and lands on its own branch + PR (same git flow as `/journal`).
 
 Everything the user typed after `/what-if` is either a **new scenario description** (the default) or a **management request** — archive, reactivate, rename, or delete-flavored phrasings ("get rid of", "bring back", "call it X instead"). Detect by intent, not keywords. If nothing was typed, ask what scenario they'd like to explore.
 
@@ -54,27 +54,24 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    - If it prints warnings (e.g. `no price history` — likely a bad or delisted ticker), surface them and ask whether to fix the scenario (edit the JSON and re-preview) or abandon (take the decline path in step 6).
    - If the count of active scenarios is now above 4, note that the chart palette has 4 slots so colors will repeat, and suggest archiving an old scenario.
 
-6. **Commit & PR** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Ask via a single `AskUserQuestion` call with four questions:
-   - "Commit and push this what-if scenario?" (Yes / No)
-   - "Open a pull request on GitHub?" (Yes / No)
-   - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
-   - "Regenerate the dashboard? (fetches live prices — slow on a cold cache)" (Yes / No)
+6. **Ship gate** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Run `python3 scripts/dashboard_due.py` and keep its one-line decision. Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this what-if scenario?", and three options in this order:
+   - "Ship it — commit, push, open PR, merge" (Recommended)
+   - "Commit, push & open PR — leave it open"
+   - "Don't commit"
 
-   **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` now, before staging (the scenario renders as a dashed overlay line on the P&L chart). **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D whatif/<YYYY-MM-DD>-<NNN>` (the edit stays in the working tree; nothing was pushed). Report and stop.
+   Set the `preview` of both shipping options to the scenario summary + preview numbers from step 5 (or the management action) plus the dashboard decision line.
 
-   If approved:
+   **If the user picks "Don't commit"**, return to `main` and drop the branch: `git switch main && git branch -D whatif/<YYYY-MM-DD>-<NNN>` (the edit stays in the working tree; nothing was pushed). Report and stop. Otherwise, **if the decision was `regenerate`** (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now, before staging (the scenario renders as a dashed overlay line on the P&L chart); report any error but don't block the commit.
+
    ```bash
    git add tracking/hypotheticals.json   # + dashboard/index.html if regenerated
    git commit -m "whatif: <name or action> (<id>)"     # e.g. "whatif: AMD instead of NVDA (whatif-20260711-001)" or "whatif: archive SPY benchmark (whatif-20260705-001)"
    git push -u origin whatif/<YYYY-MM-DD>-<NNN>
-   ```
-   If the PR was approved:
-   ```bash
    gh pr create --base main --head whatif/<YYYY-MM-DD>-<NNN> --title "whatif: <name or action>" --body "<one line: what the scenario simulates, or what changed>"
    ```
-   No second prompt — if the user approved the PR **and** the merge, `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
+   No second prompt — if the user picked "Ship it", `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
 
-7. **Report back** — the scenario `id` and name (or the management action), the preview numbers, the PR URL if opened, and a reminder that the scenario appears on the dashboard P&L chart after the next regeneration if they skipped it.
+7. **Report back** — the scenario `id` and name (or the management action), the preview numbers, the PR URL if opened, and — if the dashboard wasn't regenerated — a reminder that the scenario appears on the P&L chart after the next regeneration.
 
 ## Examples
 

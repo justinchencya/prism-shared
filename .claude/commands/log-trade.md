@@ -172,37 +172,34 @@ The Investment Log identifiers are read from the environment so the engine carri
 
    Update `last_updated` to today. Write the file. Report: `"Logged to tracking/trades.json (ID: trade-AVGO-20260607-001)."`
 
-9. **Dashboard regeneration is optional** — regenerating runs `python3 scripts/generate_dashboard.py`, which fetches live prices via yfinance (slow / network-heavy), so it is **not** run automatically. It is gated on the user's choice in Step 10 — don't run it here.
+9. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet.
 
-10. **Commit & PR** — the work is already on the `log-trade/<date>-<slug>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/trades.json`, plus `tracking/positions-thesis.json` and/or `tracking/candidates.json` if Step 7 moved a thesis). Note that `dashboard/index.html` is included only if the user opts to regenerate it.
+10. **Ship gate** — the work is already on the `log-trade/<date>-<slug>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/trades.json`, plus `tracking/positions-thesis.json` and/or `tracking/candidates.json` if Step 7 moved a thesis) and the dashboard decision line.
 
-    Ask for permission using a single `AskUserQuestion` call with four questions:
-    - "Commit and push this trade log?" (Yes / No)
-    - "Open a pull request on GitHub?" (Yes / No)
-    - "Merge the PR right after opening it? (squash; ignored if no PR)" (Yes / No)
-    - "Regenerate the dashboard? (fetches live prices via yfinance — slow)" (Yes / No)
+    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this trade log?", and three options in this order:
+    - "Ship it — commit, push, open PR, merge" (Recommended)
+    - "Commit, push & open PR — leave it open"
+    - "Don't commit"
 
-    Wait for the answers. **If the user opted to regenerate**, run `python3 scripts/generate_dashboard.py` from the repo root now, before staging. Report success or any error output. **If the user declines the commit**, return to `main` and drop the branch: `git switch main && git branch -D log-trade/<date>-<slug>` (the tracking edits remain in the working tree; the Notion row written in Step 5 stays — only the branch is discarded). Report and stop.
+    Set the `preview` of both shipping options to the logged trade(s) (ticker · action · amount · shares · price · linked runs) plus the dashboard decision line.
 
-    If the user approves the commit, run (the branch already exists — just stage, commit, push). Include `dashboard/index.html` in the `git add` **only if it was regenerated** in Step 10:
+    **If the user picks "Don't commit"**, return to `main` and drop the branch: `git switch main && git branch -D log-trade/<date>-<slug>` (the tracking edits remain in the working tree; the Notion row written in Step 5 stays — only the branch is discarded). Report and stop. Otherwise, **if the decision was `regenerate`** (or the user explicitly asked for a regen), run `python3 scripts/generate_dashboard.py` now, before staging; report any error but don't block the commit. If the user explicitly asked to skip the dashboard, skip it.
+
+    Stage, commit, push, open the PR (the branch already exists). Include `dashboard/index.html` **only if it was regenerated**:
     ```bash
     cd <repo-root>
     git add tracking/trades.json   # + dashboard/index.html if regenerated; + tracking/positions-thesis.json and/or tracking/candidates.json if modified in Step 7
     git commit -m "log-trade: <ticker> <action> <date> (<id>)"
     git push -u origin log-trade/<date>-<slug>
-    ```
-
-    If the user also approved the PR, run:
-    ```bash
     gh pr create --base main --head log-trade/<date>-<slug> --title "log-trade: <ticker> <action> <date>" --body "<one line: ticker, action, amount, linked runs>"
     ```
 
-    No second prompt — if the user approved the PR **and** the merge, run `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way, finish on `main`:
+    No second prompt — if the user picked "Ship it", run `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way, finish on `main`:
     ```bash
     git switch main
     ```
 
-    The remote is named `origin`. `dashboard/index.html` is tracked and committed with the trade only if the user opted to regenerate it. If any git/`gh` step fails, report the error and stop — no destructive retry.
+    The remote is named `origin`. If any git/`gh` step fails, report the error and stop — no destructive retry.
 
 ## Handling missing fields
 

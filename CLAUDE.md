@@ -35,7 +35,7 @@ The agents' prompts are the rubrics; if output quality drifts, tighten the relev
 2. **Decompose** — director writes a two-layer question tree to `reports/<run>/plan.md` (including `dispatch_mode: subagent` as a record of this orchestration). Layer 1 = broad themes, Layer 2 = specific researchable items.
 3. **Allocate** — director groups Layer-2 items into 3–8 bundles.
 4. **Dispatch (parallel)** — director writes a dispatch manifest; the command fires one researcher per bundle in parallel and resumes the director.
-5. **Critique & iterate (adaptive)** — director reads all reports, writes per-report critiques to `critiques/round-N.md`, writes a revision manifest for only those needing work; the command dispatches revisions and resumes the director. Repeats until satisfied OR effort cap hit (`quick`=0 rounds, `low`=1, `medium`=2, `high`=4 — upper bounds; director may stop earlier). `quick` shrinks the whole pipeline, not just revisions: 2–3 bundles at survey depth, no critique files, and one combined ticker-scan researcher (`tickers/ticker-scan.md`) instead of per-ticker deep dives.
+5. **Critique & iterate (adaptive)** — director reads all reports, writes per-report critiques to `critiques/round-N.md`, writes a revision manifest for only those needing work; the command dispatches revisions and resumes the director. Repeats until satisfied OR effort cap hit (`quick`=0 rounds, `low`=1, `medium`=2, `high`=4 — upper bounds; director may stop earlier). **Effort defaults to `quick`** — the command never asks; a deeper run needs an explicit `effort:<level>` flag (or a plain-words ask like "high effort" / "deep dive"). `quick` shrinks the whole pipeline, not just revisions: 2–3 bundles at survey depth, no critique files, and one combined ticker-scan researcher (`tickers/ticker-scan.md`) instead of per-ticker deep dives.
 6. **Synthesize** — director writes `final-report.md` as a graph: connections, contradictions, cascades, emergent picture. Tickers section included only if the question implies investable output.
 7. **Commit** — `/research` commits the run on its own `research/<YYYY-MM-DD>-<slug>` branch and opens a PR.
 
@@ -52,7 +52,7 @@ A lightweight capture command for the user's own thinking — reflections, hesit
 
 1. **Sync + refine** — `/journal` syncs `main`, takes everything after `/journal` as a raw reflection (asks for it if empty), and helps the user refine it into clearer prose — preserving voice, stance, and doubt — before storing the approved text.
 2. **Link (always asked)** — suggests related research runs (keyword/ticker matches + recent runs) and tickers (tagged `[PORTFOLIO]`/`[CANDIDATE]`/`[NEW]`), and asks which to link. For a linked `[NEW]` ticker, offers to add it to `candidates.json`.
-3. **Persist** — appends an entry (`journal-<YYYYMMDD>-<seq>`) to `tracking/journal.json` and, if the user opts in at commit time, regenerates the dashboard (the entry renders as a violet node in the Timeline view).
+3. **Persist** — appends an entry (`journal-<YYYYMMDD>-<seq>`) to `tracking/journal.json` and, when `scripts/dashboard_due.py` says so at commit time, regenerates the dashboard (the entry renders as a violet node in the Timeline view).
 4. **Commit** — `/journal` commits on its own `journal/<YYYY-MM-DD>-<NNN>` branch and opens a PR (same git flow as `/scout`).
 
 ## What-if flow
@@ -72,7 +72,7 @@ Pulls the **real brokerage state** via SnapTrade (Personal API key — HMAC-sign
 2. **Fetch** (sync mode) — `scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json` writes accounts, balances, positions, open option contracts, and lookback-window activities (stdlib-only; account numbers masked to last 4; exit 2 = creds missing → fall back to review-only).
 3. **Reconcile** — the snapshot owns "what's held"; reconcile only keeps the thesis overlay coherent with it: a bought watchlist name → move its thesis candidate → `positions-thesis.json`; a thesis left on an exited name → propose pruning it. A held name with no thesis is **not** a fix (it surfaces in the held-without-thesis review). Unlogged trades → **suggest `/log-trade`, never write `trades.json`** (it mirrors Notion 1:1). Fixes are user-approved before any write.
 4. **Review** — terse, investor-stance read of the snapshot: concentration, cash, per-position P&L, open options (share encumbrance from short calls, near/past expiries, assignment risk), held-without-thesis (→ ready-to-run `/research` questions), active `events[]` on held names, thesis staleness.
-5. **Commit** — `/sync-portfolio` commits the snapshot + approved fixes on its own `sync-portfolio/<timestamp>` branch and opens a PR. Dashboard regen offered only if `positions-thesis.json`/`candidates.json` changed.
+5. **Commit** — `/sync-portfolio` commits the snapshot + approved fixes on its own `sync-portfolio/<timestamp>` branch and opens a PR. Dashboard regen considered (via `scripts/dashboard_due.py`) only if `positions-thesis.json`/`candidates.json` changed.
 
 ## Git convention
 
@@ -92,9 +92,15 @@ Standardized branch names — `<type>/<identifier>`, all date-prefixed, all comp
 | `/what-if` | `whatif/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `hypotheticals.json` (bumped past existing branches for management runs) | — (tracking file) |
 | `/sync-portfolio` | `sync-portfolio/<YYYY-MM-DD-HHMMSS>` | `date +%Y-%m-%d-%H%M%S` (per-second, like `/scout`) | — (tracking files) |
 
-**Prompt-first for anything remote.** Local branch creation is cheap and unprompted; the run does its work on the branch, then the command shows the run's results first (e.g. `/research`'s verdict table, `/scout`'s ranked list) — as text, **and** inside the prompt as the first question's option `preview` (mid-turn text isn't reliably visible), **and** again in the final message — plus the files, then uses **one** `AskUserQuestion` call to gate all externally-visible steps at once: *commit & push?* / *open PR?* / *merge after opening?* (plus *regenerate dashboard?* where applicable). Merge is executed right after the PR opens and is ignored if no PR was approved — nothing is pushed or merged without the user's yes.
+**Prompt-first for anything remote — one ship gate.** Local branch creation is cheap and unprompted; the run does its work on the branch, then the command shows the run's results first (e.g. `/research`'s verdict table, `/scout`'s ranked list) — as text, **and** inside the prompt as the option `preview` (mid-turn text isn't reliably visible), **and** again in the final message — plus the files, then asks the **ship gate**: **one** `AskUserQuestion` call with **one** question covering every externally-visible step at once:
 
-**The dashboard is committed, regeneration is opt-in.** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files), `/research` (tracking + a new `final-report.md`), and `/sync-portfolio` (only when a reconciliation fix touches `positions-thesis.json`/`candidates.json`; the snapshot itself is not a dashboard input) — *can* regenerate it (`python3 scripts/generate_dashboard.py`), but regeneration is **not automatic**: the script fetches live prices via yfinance (slow / network-heavy), so each of those commands **asks the user** (an extra question folded into the same commit-permission `AskUserQuestion`) whether to regenerate. Only when the user says yes does the command run the script and stage `dashboard/index.html` **with the run**; otherwise the committed dashboard is left as-is and may lag the data until the next opt-in regen. `/scout` and `/podcast` touch no dashboard input, so they neither regenerate nor stage it.
+- **Ship it — commit, push, open PR, merge** (Recommended, listed first)
+- **Commit, push & open PR — leave it open** (merge on GitHub later)
+- **Don't commit** (decline path)
+
+Both shipping options' `preview` carries the run's results plus the dashboard decision (below). Nothing is pushed or merged without the user picking a shipping option; free-text "Other" answers (e.g. "ship it but skip the dashboard") are honored as written.
+
+**The dashboard is committed, regeneration is rule-based (no prompt).** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files), `/research` (tracking + a new `final-report.md`), and `/sync-portfolio` (only when a reconciliation fix touches `positions-thesis.json`/`candidates.json`; the snapshot itself is not a dashboard input) — decides regeneration with `python3 scripts/dashboard_due.py` instead of asking. It prints `regenerate: …` (exit 0) only when **now is a NYSE trading day after that day's close (13:00 PT; 10:00 PT on early-close days) and no commit on `main` has touched `dashboard/index.html` since that close** — i.e. once per trading day, on closing prices; otherwise `skip: …` (exit 1). The generator fetches live prices via yfinance (slow), so this keeps it to one regen per close. The command runs the check before the ship gate and states its one-line decision in the gate's preview; if the user ships, it runs `python3 scripts/generate_dashboard.py` on `regenerate` (or when the user's invocation/answer explicitly asks for a regen) and stages `dashboard/index.html` **with the run**; on `skip` the committed dashboard is left as-is. A regen error is reported but never blocks the commit. `/scout` and `/podcast` touch no dashboard input, so they neither check nor regenerate.
 
 Canonical procedure (each command substitutes branch / paths / title):
 
@@ -104,28 +110,30 @@ test ! -e .prism-engine || { echo "engine repo — run this in your private repo
 git status --porcelain                               # clean-tree guard: unrelated changes → stop & report
 git switch main && git pull --ff-only origin main    # the ONE sync
 git switch -c <type>/<identifier>                     # branch off fresh main, BEFORE the work
+# non-English input + set_session_title tool available → rename the session to "<type>: <English identifier>" (see Voice)
 # ... the command does its work ON THE BRANCH: agent run / file writes / Notion ...
-# ── at commit time, after showing files + AskUserQuestion yes ──
-git add <run-paths>                                   # + dashboard/index.html if the run mutated a dashboard input
+# ── at commit time, after showing files + the ship gate's yes ──
+python3 scripts/dashboard_due.py && python3 scripts/generate_dashboard.py   # only if the run mutated a dashboard input
+git add <run-paths>                                   # + dashboard/index.html if regenerated
 git commit -m "<type>: <slug> (<date>)"
 git push -u origin <type>/<identifier>
 gh pr create --base main --head <type>/<identifier> --title "<type>: <slug>" --body "<one line>"
-# ── if the user approves the merge ──
+# ── if the user picked "Ship it" (merge) ──
 gh pr merge --squash --delete-branch
 git switch main                                       # always finish on main
 ```
 
 - **Engine-repo guard** — `.prism-engine` at the repo root marks the public engine repo (prism-shared); every command except `/sync` stops there and points the user to their private repo. Single-repo setups delete the marker.
 - **Clean-tree guard** — before pulling/branching, if `git status --porcelain` shows changes unrelated to this run, stop and report; never stash or sweep them in.
-- **Decline path** — if the user says no at *commit & push?*, return to `main` and drop the unused local branch: `git switch main && git branch -D <type>/<identifier>` (the work returns to the working tree; nothing was pushed). For `/log-trade` and `/journal`, any Notion write and tracking-file edits already made remain — only the branch is discarded.
+- **Decline path** — if the user picks *Don't commit* at the ship gate, return to `main` and drop the unused local branch: `git switch main && git branch -D <type>/<identifier>` (the work returns to the working tree; nothing was pushed). For `/log-trade` and `/journal`, any Notion write and tracking-file edits already made remain — only the branch is discarded.
 - **Failure rule** — any git/`gh` failure: report and stop, no destructive retry.
-- PRs are merged only on the user's explicit *merge?* yes; otherwise left open to merge on GitHub. `/podcast` additionally expects its target report to already be merged into `main` (it verifies the report is present right after the sync, before cutting the branch).
+- PRs are merged only when the user picks *Ship it* at the ship gate; otherwise left open to merge on GitHub. `/podcast` additionally expects its target report to already be merged into `main` (it verifies the report is present right after the sync, before cutting the branch).
 
 ## Two-repo sync
 
 Prism lives in two sibling repos:
 
-- **prism-shared** (public) — the engine: `scripts/`, `.claude/agents/`, `.claude/commands/`, `CLAUDE.md`, `README.md`, `setup.sh`. Canonical home for all feature work. Tracking JSONs are empty templates; `scout-x-feeds.json` holds placeholder handles.
+- **prism-shared** (public) — the engine: `scripts/`, `.claude/agents/`, `.claude/commands/`, `.claude/hooks/` + `.claude/settings.json`, `CLAUDE.md`, `README.md`, `setup.sh`. Canonical home for all feature work. Tracking JSONs are empty templates; `scout-x-feeds.json` holds placeholder handles.
 - **prism** (private) — the daily driver: the same engine **plus** personal data (`reports/`, `scouts/`, `memos/`, real `tracking/*.json`, generated `dashboard/index.html`, real X follows, `.env`).
 
 **Rules:**
@@ -176,7 +184,7 @@ tracking/
   hypotheticals.json           # what-if scenarios written by /what-if
   brokerage-snapshot.json      # real brokerage state fetched from SnapTrade by /sync-portfolio
 dashboard/
-  index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / what-if / research / sync-portfolio) only when the user opts in at commit time (regen is slow — fetches live prices)
+  index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / what-if / research / sync-portfolio) when scripts/dashboard_due.py says it's due (once per trading day, after the 13:00 PT close)
 ```
 
 Cast voices live in `.claude/podcast-cast.json` (created on first `/podcast` run, reused after). Helper at `scripts/tts_synthesize.py` does the OpenAI HTTP calls. The scout's curated X follow list lives in `.claude/scout-x-feeds.json` (hand-edited; `handles[]` with optional `topics`/`note`).
@@ -252,6 +260,7 @@ The user is primarily a long-term investor (multi-year core holdings) who also k
 - If something is unknown, say "unknown" — don't write fluently past it.
 - State conviction explicitly when claims are uncertain.
 - Always write in English — session names, saved files, and every message returned — regardless of the input language. Quoting short passages in the original language (e.g. Chinese) is fine when the input or a source is in that language and the quote is needed.
+- **Session titles are not set by this file.** Claude Code titles a session from the first prompt with a separate model call that never reads `CLAUDE.md`, so the rule above can't reach it. Two mechanisms enforce it instead: (1) the `UserPromptSubmit` hook in `.claude/settings.json` (`.claude/hooks/english_session_title.py`) sets an English title — slash command + the prompt's English words/tickers — whenever the first prompt contains CJK text; (2) when the input had non-English text and a `set_session_title` tool is available (cloud sessions), rename the session to the run's English identifier (e.g. `research: nvda-power-cooling`) right after the branch is cut.
 
 ## Data sources
 

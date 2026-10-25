@@ -46,7 +46,7 @@ Prism runs inside Claude Code. One-time setup:
 
 Prism's outputs are personal — trades, reports, journal entries. The recommended way to run it long-term is **two sibling repos**:
 
-- **The engine** ([prism-shared](https://github.com/justinchencya/prism-shared), public): `scripts/`, `.claude/agents/`, `.claude/commands/`, `CLAUDE.md`, `README.md`, `setup.sh`. Tracking files ship as empty templates.
+- **The engine** ([prism-shared](https://github.com/justinchencya/prism-shared), public): `scripts/`, `.claude/agents/`, `.claude/commands/`, `.claude/hooks/` + `.claude/settings.json`, `CLAUDE.md`, `README.md`, `setup.sh`. Tracking files ship as empty templates.
 - **Your daily driver** (a private repo): the same engine files plus your real data (`reports/`, `scouts/`, `tracking/*.json`, generated dashboard, real X follows, `.env`).
 
 Engine changes belong in the engine repo first, then flow to the private repo; changes made in the private repo during daily use get ported back — with anything personal stripped. `/sync` (`.claude/commands/sync.md`) automates both directions: it diffs the engine file set between the sibling checkouts, infers direction per file from git history, sanitizes anything flowing into the public repo, and lands the changes as a PR in the receiving repo. Engine files stay byte-identical across the pair; only the personal data ever differs.
@@ -101,7 +101,7 @@ Refracts the question into sub-questions, researches them in parallel, iterates 
 4. If the question implies investable output, a second pass runs per-ticker deep dives with explicit **Thesis verdict** (does the hypothesis hold?) and **Market verdict** (Buy / Hold / Avoid on the horizon the question implies — multi-year by default). Two verdicts per ticker is deliberate — being right about the trend and being right about the trade are different problems.
 5. Director synthesizes a final report as a graph: connections, contradictions, cascades.
 
-`effort:quick` is the fast high-level mode: 2–3 bundles at survey depth, no `critiques/` artifacts, and one combined ticker scan (`tickers/ticker-scan.md`) instead of per-ticker deep dives — you still get meta-trends, theses, and the verdict table, in a fraction of the time.
+Effort defaults to `quick` (no prompt) — pass `effort:low|medium|high` for a deeper run. `quick` is the fast high-level mode: 2–3 bundles at survey depth, no `critiques/` artifacts, and one combined ticker scan (`tickers/ticker-scan.md`) instead of per-ticker deep dives — you still get meta-trends, theses, and the verdict table, in a fraction of the time.
 
 **Output** → `reports/YYYY-MM-DD-<slug>/`
 
@@ -171,7 +171,7 @@ Logs an investment action to the Notion Investment Log database, links it to the
 
 1. Parses your natural-language description into trade fields — ticker, amount, action (`buy`/`add`/`trim`/`sell`), and optional shares, price, and comment.
 2. Finds research runs that covered the ticker and asks which informed the trade, then inserts the row into the Notion Investment Log database with the research linked as a hyperlink in the Comment.
-3. Updates the tracking layer: `trades.json` always; the thesis overlay (`positions-thesis.json` / `candidates.json`) only to *move an existing thesis* when a watched name is bought (candidate → positions-thesis) or prune one when a held name is fully exited — a bought name with no thesis gets no stub (holdings live in the brokerage snapshot). Optionally regenerates the dashboard (asked at commit time — it fetches live prices).
+3. Updates the tracking layer: `trades.json` always; the thesis overlay (`positions-thesis.json` / `candidates.json`) only to *move an existing thesis* when a watched name is bought (candidate → positions-thesis) or prune one when a held name is fully exited — a bought name with no thesis gets no stub (holdings live in the brokerage snapshot). Regenerates the dashboard automatically when due — once per trading day, after the 1 pm PT close (`scripts/dashboard_due.py`).
 4. Lands on its own branch + Pull Request, same as every other command.
 
 **Requirements:** a Notion integration token in `NOTION_TOKEN` (the MCP server wired in `.mcp.json` reads it from `.env`), with your Investment Log database shared to that integration. Optionally pin the database via `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` / `NOTION_INVESTMENT_LOG_DATABASE_ID` (otherwise it's resolved by name). Without Notion configured, `/log-trade` still records every trade locally in `trades.json`. See the **Setup** section and `.env.example`.
@@ -198,7 +198,7 @@ Captures a free-form reflection — a hesitation, an imagined scenario, a road n
 
 1. Takes your raw reflection and helps refine it into clearer prose — keeping your voice, stance, and doubts — before saving the version you approve.
 2. Always asks which research runs and tickers to link, suggesting matches from the text (recent runs, and tickers tagged `[PORTFOLIO]` / `[CANDIDATE]` / `[NEW]`). A linked `[NEW]` ticker can be added to `candidates.json` on the spot.
-3. Appends the entry to `journal.json`, optionally regenerates the dashboard (the entry shows as a violet node in the Timeline), and lands on its own branch + Pull Request.
+3. Appends the entry to `journal.json`, regenerates the dashboard when due (the entry shows as a violet node in the Timeline), and lands on its own branch + Pull Request.
 
 **Output** → `tracking/journal.json` (and a timeline node in the dashboard)
 
@@ -267,7 +267,7 @@ Pulls your **real brokerage state** — accounts, balances, positions, recent ac
 
 ---
 
-The seven commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted before anything is committed, pushed, or merged.
+The seven commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
 
 ---
 
