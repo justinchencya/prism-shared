@@ -63,6 +63,7 @@ install_if_missing() {
 }
 
 install_if_missing "yfinance"
+install_if_missing "matplotlib"   # annotated K-line charts (scripts/technical_structure.py)
 
 echo ""
 

@@ -54,16 +54,24 @@ Process:
    - `history`: quarterly revenue (B), gross margin, operating margin, and YoY revenue growth for up to 8 quarters — use these to identify acceleration/deceleration and margin trends
    - `price_history`: monthly closes for 3 years — use for multiple expansion/contraction context relative to fundamentals
    - `technicals`: an entry-timing / positioning lens computed from daily prices (all decimals) — 50/200-day MAs + `pct_vs_sma50/200`, `rsi14`, trailing `return_1m/3m/6m/12m`, `pct_from_52w_high/low`, `rel_strength_vs_spy` (excess return vs SPY over 3m/6m — the closest free proxy for where capital is flowing), and a `volume` trend (`ratio_20d_vs_3m`).
+   - `technicals.structure`: the chart-structure read (from `scripts/technical_structure.py`) — `trend` (趋势: MA stack 20/50/100/200 + slopes, major-swing structure, `structure_status` vs the last swing high/low, ADX + direction, last 50/200 cross), `macd` (DIF/DEA/hist + last cross), `divergences` (顶背离 `bearish` / 底背离 `bullish`, price pivot vs RSI14 or MACD DIF), `chips` (筹码分布: turnover-decay cost distribution — `peaks` 筹码峰, `avg_cost`, `profit_ratio` 获利比例, 70%/90% cost ranges), `volume_profile` (12-month POC + value area), `anchored_vwap` (from the 52-week high and low), `levels` (clustered `supports` / `resistances` with their sources and `confluence` count, `break_level` 破位线 + `confirmed_break_rule`, ATR14), `recent_breaks` (levels crossed in the last 10 sessions with volume ratio).
+   - `technicals.chart`: filename of the annotated daily K-line chart written next to the JSON (`reports/<run>/tickers/chart_<TICKER>.png`) — candles, MAs, AVWAPs, swing pivots, support/resistance, the break level, divergence lines, chip distribution, volume, MACD, RSI.
    - `edgar_cross_check`: annual revenue from EDGAR 10-K filings — sanity-check yfinance figures against reported data
 
    Cite snapshot values as `(yfinance, <fetched_at date>)`. If the script fails or a field is `null`, note the gap inline and fall back to WebSearch + WebFetch for that specific metric.
 
    **Step 3b — fill gaps and consensus**: For metrics not in the JSON (consensus FY+1/FY+2 revenue, NRR, specific segment growth, analyst price targets), use WebSearch + WebFetch as before — recent IR pages, Bloomberg/Reuters quoting consensus, sell-side previews. **Note the retrieval date inline** because prices and estimates stale fast. If a free path doesn't exist for a number, say so and give a conviction-flagged best-effort.
 
-   **Step 3c — read the technicals: secondary for long-term calls, primary for short-term / speculative ones.** These are price-derived (MAs, RSI, momentum, relative strength) — they tell you *when / at what level* to enter, not *whether the thesis holds*, so they never drive the Thesis verdict. For a long-term question they almost never drive the Market verdict on their own; for a short-term / speculative question they are a core input to it, alongside the catalyst and its timing. Use them to:
-   - **sharpen the Entry condition** — e.g. "price is 10% below its 50-day MA and RSI 41, so a pullback to the 200-day (~$269) is a more attractive multi-year entry than chasing here."
-   - **flag a divergence worth a sentence** — fundamentals improving but `rel_strength_vs_spy` negative and volume fading (capital leaving the name despite the story), or the reverse (accumulation ahead of the fundamentals). Note it; don't overweight it.
-   Do **not** emit buy/sell calls from RSI/MACD-style thresholds alone, and on a long-term question do not let a momentum reading override a fundamentals-and-flows verdict. If `technicals` is empty/partial, say so in one line and move on.
+   **Step 3c — read the chart: secondary for long-term calls, primary for short-term / speculative ones.** Technicals tell you *where the market's positioning breaks* and *when / at what level* to act — never *whether the thesis holds*, so they never drive the Thesis verdict. For a long-term question they rarely drive the Market verdict on their own; for a short-term / speculative question they are a core input to it, alongside the catalyst and its timing.
+
+   1. **Look at the chart.** Open `reports/<run>/tickers/chart_<TICKER>.png` with the Read tool and read it as a technician would before trusting any computed label: is the trend visibly what `trend.trend` says? Do the drawn levels sit where price actually turned? Is there a divergence the pivot rule missed (or a flagged one that looks like noise)? Where the eye and the numbers disagree, say so and say which you trust and why — the computed fields are mechanical rules with fixed pivot widths; the chart is the check on them.
+   2. **Derive each read from named evidence** — every technical statement cites the JSON field (and value) or the visible chart feature it comes from, so the user can verify it on the chart and learn the method. No "the chart looks bearish" without the why.
+   3. **Name the break level (破位线) and what it means on this horizon.** Start from `levels.break_level` (adjust it if the chart shows a better-defined level — say why). State the confirmed-break rule. Then the action:
+      - **short-term / speculative**: a confirmed break is the **exit / stop** — conviction doesn't override it; size the position so that stop is tolerable.
+      - **long-term**: a confirmed break is a **forced re-underwrite**, not something to sit through: re-check every fundamental falsifier now. If any is also flashing → trim/exit. If none is → holding is allowed only as a stated override, with the next support below as the hard line.
+   4. **Use it in the verdict lines** — fold levels into the **Entry condition** (e.g. "buy a reclaim of $339 — chip peak + 12m POC — or a hold of the $306 swing-low cluster; not before") and the break level into **What would kill it**.
+
+   Limits to state, not paper over: price data can't show *who* is selling. A break below a large chip peak on ≥1.5× volume is *consistent with* large holders exiting — never write that institutions are selling unless 13F (Step 3d) or a filing shows it. The chip model approximates holder cost from volume and float; it is not holder data. Do **not** emit buy/sell calls from RSI/MACD thresholds alone. If `technicals.structure` or the chart is missing, say so in one line and fall back to the basic `technicals` fields.
 
    **Step 3d — institutional breadth (13F) — only when the director's prompt says `include_13f: yes`** (high-effort runs by default, or when the user explicitly asked for the institutional/13F lens). On `include_13f: no` — or if an initial dispatch omits the flag — **skip this step entirely** (it costs minutes per name) and write the one-line skip note in the **Institutional ownership** template section instead. In revision mode, run it (regardless of flag) if the critique asks for the 13F section. When enabled, run via Bash:
    ```
@@ -90,7 +98,7 @@ You receive:
 
 Process:
 1. Read the cited round-1 reports once (they're shared context for all names).
-2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block (MAs, RSI, momentum, relative strength vs SPY) — fold it into the **Entry condition** line (see Step 3c in ticker sub-mode for how much weight it gets by horizon). **Skip `fetch_13f_breadth.py` in scan mode** — it takes minutes per name and quick runs don't have the budget; the 13F lens belongs to per-ticker deep dives.
+2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block with `structure` (trend, levels, break level, chips, divergences), and the script writes `chart_<TICKER>.png` beside it — open the chart, then fold the read into the **Entry condition** line and the **Technical structure** line (see Step 3c in ticker sub-mode for how much weight it gets by horizon and what a break level means). **Skip `fetch_13f_breadth.py` in scan mode** — it takes minutes per name and quick runs don't have the budget; the 13F lens belongs to per-ticker deep dives.
 3. For each ticker, do a **capped** search pass — ~3–4 WebSearch/WebFetch operations per name — targeting only what the verdicts need: the load-bearing open question(s) and anything the stats JSON can't answer. This is a survey, not a deep dive; unanswered open questions go in that ticker's Open/unanswered line, not into more searching.
 4. Form both verdicts per ticker (same Thesis/Market separation and horizon lens as ticker sub-mode).
 5. Write one file using the **ticker-scan template** below.
@@ -125,7 +133,8 @@ Process:
 | <1–2 key multiples> | ... | ... | ... |
 
 - **What has to be true**: <2–3 bullets, claim + source + conviction>
-- **What would kill it**: <1–2 falsifier bullets>
+- **What would kill it**: <1–2 falsifier bullets — include the break level>
+- **Technical structure**: <trend · break level $X (+ horizon action) · nearest resistance $Y · divergence if any> — chart: ![<TICKER>](chart_<TICKER>.png)
 - **Open / unanswered**: <what the capped budget didn't reach — be specific>
 
 ## $<TICKER2> — <Company name>
@@ -218,7 +227,7 @@ Process:
 <Load-bearing claims of the hypothesis. Each bullet: claim, source, conviction (low/med/high).>
 
 ## What would kill it
-<Falsifiers. Each bullet: condition, what evidence would confirm it, source if any.>
+<Falsifiers. Each bullet: condition, what evidence would confirm it, source if any. Always include one technical falsifier: a confirmed break of the break level from **Technical structure**, with its price and rule.>
 
 ## Key numbers + valuation context
 | Metric | Value | Source | Date retrieved |
@@ -238,8 +247,24 @@ Process:
 ## What's already priced in
 <Explicit read of what the current price implies vs. consensus and your hypothesis. This is the bridge from thesis verdict to market verdict. If the upside is already in the price, say so.>
 
-## Price & positioning
-<2–3 sentences from the `technicals` block: where price sits vs its 50/200-day MAs and 52-week range, RSI/momentum, and relative strength vs SPY (the capital-flow proxy) + volume trend. Frame as entry timing — what level improves the setup, or any flow/momentum divergence from the fundamental story. On short-term / speculative questions, this plus the catalyst timing is the core of the market verdict. Omit only if `technicals` was empty (then say so in one line).>
+## Technical structure
+![<TICKER> daily chart](chart_<TICKER>.png)
+
+**Trend (趋势):** <uptrend / downtrend / range — and why: swing structure, MA stack, ADX + direction, last 50/200 cross>
+**Break level (破位):** $<price> (<% from price>) — <what converges there>. Confirmed break: <rule>. On this horizon: <exit/stop (spec) · forced re-underwrite with the next hard line (long)>.
+**Overhead / support:** <nearest resistances and supports that matter, with what makes each one real — chip peak, POC, swing cluster, MA, AVWAP>
+**Chips (筹码):** <avg cost, % in profit, where the big peaks sit vs price — trapped supply overhead or a cost floor below>
+**Divergence (背离):** <none / bearish or bullish, indicator, pivot dates and values — or one you saw on the chart that the rule missed>
+**Relative strength & volume:** <excess return vs SPY 3m/6m, volume trend, volume on any recent break>
+
+| Read | Evidence (JSON field or chart feature) | Value |
+|------|----------------------------------------|-------|
+| <e.g. Downtrend> | <`trend.swing_structure` = downtrend; major highs 2026-06-03 $500 → 2026-10-06 $385 visibly lower> | <…> |
+| <e.g. Break level> | <`levels.break_level` — 2026-01-23 swing low + 12m value-area low> | <$314.53> |
+
+**Visual cross-check:** <1–2 sentences: where the chart agreed with the computed labels, and anything it contradicted (and which you trusted).>
+
+<1–2 sentences: what this means for the Market verdict on this horizon — entry timing for long-term, core setup for spec. If `technicals.structure`/the chart were unavailable, replace this section with one line saying so plus the basic MA/RSI/RS read.>
 
 ## Institutional ownership (13F)
 <Only when Step 3d ran (`include_13f: yes`): 2–3 sentences from the 13F breadth JSON — holder-count trend over the covered quarters (direction + streak, e.g. "1,001 → 1,182 → 1,352 → 1,443 institutions over four quarters"), whether new positions are accelerating or decelerating, and what that confirms or contradicts about the thesis. Note the staleness window (latest complete quarter + filing lag). Confirmation lens only — it follows the fundamentals, it doesn't lead them. If the script failed or the series is too short, say so in one line. If Step 3d was skipped, keep the section as the single line: "Not run at this effort level (13F breadth is high-effort by default — re-run with effort=high or request the 13F lens explicitly).".>

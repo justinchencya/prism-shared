@@ -194,6 +194,7 @@ Mandatory checks for ticker reports:
 - If Thesis = Support but Market ≠ Buy, does the report clearly explain *why* (priced in, heroic assumptions, etc.) with sourced valuation evidence?
 - Are current price and key valuation multiples sourced with retrieval dates?
 - Is the verdict judged on the horizon the question implies (long-term by default) — not a multi-year bar applied to a trade question, or vice versa?
+- **Technical structure**: is the chart embedded, does every read cite its evidence (JSON field or chart feature), is the break level named with its confirmed-break rule and a horizon-correct action, and does the visual cross-check exist? Spot-check one or two claims against `ticker_stats_<TICKER>.json` and the chart yourself. Reject any claim that institutions are selling unless 13F or a filing backs it.
 
 ### Phase 7 — Synthesize (final report)
 
@@ -246,6 +247,7 @@ Badge rule: `[PORTFOLIO]` if the ticker is in `portfolio_tickers`, `[CANDIDATE]`
 - **Why this ticker is in this report**: One sentence — explicit tie from the run's central question to this specific company's business (e.g., "SpaceX IPO re-rates the listed-space comp set; VSAT is the public MSS-spectrum operator most directly comped against Starlink.").
 - **Thesis verdict**: Support / Weaken / Inconclusive — one line.
 - **Market verdict**: Buy / Hold / Avoid — one line. If Thesis=Support but Market≠Buy, explicitly say why (e.g., "priced in at $X for the next 12 months and still attractive on a 5-year hold given Y" → Buy; "priced for perfection that even base-case multi-year execution can't justify" → Hold/Avoid).
+- **Technical structure**: trend · break level $X (confirmed-break rule, and the action on this run's horizon) · the nearest level that would improve entry — one line, with a link to the ticker's chart (`tickers/chart_<TICKER>.png`).
 - Load-bearing claims (what has to be true), key numbers + valuation context, falsifiers — 3–6 bullets max. $TICKER inline refs to the ticker report file.
 
 ### $TICKER2 — <verdict>
@@ -285,7 +287,7 @@ Every entry written in this phase carries the run's `horizon` from `plan.md`.
 
 For each ticker in the final report and its ticker report file, extract:
 1. Hold/Avoid verdict with an explicit price level or condition that would flip to Buy → `type: "buy_trigger"`
-2. Falsifier bullets requiring ongoing monitoring (quarterly metrics, regulatory outcomes, competitive data points — not established historical facts) → `type: "falsifier"`
+2. Falsifier bullets requiring ongoing monitoring (quarterly metrics, regulatory outcomes, competitive data points — not established historical facts) → `type: "falsifier"`. This includes the ticker's **break level** from its Technical structure section — id `<TICKER>-FAL-BRK<price rounded to a whole dollar>` (e.g. `AVGO-FAL-BRK315`), condition = the confirmed-break rule at that price. A later run that moves the level marks the old event `stale` and creates a new one (the price is in the id, so it's immutable).
 3. Key Uncertainties naming a future event with an expected window, if ticker-specific → `type: "event_monitor"`
 
 **Where to write:**
@@ -311,7 +313,7 @@ Append to the ticker's `reports` array in the appropriate file. Do not overwrite
 - `<TICKER>-<TYPE_SHORT>-<KEYWORD>`
   - TYPE_SHORT: `BUY` (buy_trigger) · `FAL` (falsifier) · `EVT` (event_monitor)
   - KEYWORD: 1–2 words from the most specific, immutable part of the condition — the metric name, event type, or price level. Not the company name. Not a generic word.
-  - Examples: `PGR-BUY-180`, `CRM-FAL-CRPO`, `GOOGL-EVT-DOJ`, `AMZN-FAL-SILICON`
+  - Examples: `PGR-BUY-180`, `CRM-FAL-CRPO`, `GOOGL-EVT-DOJ`, `AMZN-FAL-SILICON`, `AVGO-FAL-BRK315` (technical break level)
 - Once an `id` is written, never change it.
 
 **Before creating any event entry:**

@@ -12,7 +12,11 @@ Writes:
     price_history — monthly closing prices for 3 years
     technicals    — entry-timing/positioning lens computed in pandas (no ta-lib):
                     50/200-day MAs + distance, RSI(14), trailing returns,
-                    relative strength vs SPY, volume trend, 52-week position
+                    relative strength vs SPY, volume trend, 52-week position,
+                    plus `structure` — chart structure from scripts/technical_structure.py
+                    (trend/swings, MACD, divergences, chip distribution, volume
+                    profile, anchored VWAPs, support/resistance, break level)
+  chart_<TICKER>.png  annotated daily K-line chart, written next to <output-path>
     edgar_cross_check — annual revenue from EDGAR 10-K filings (sanity check)
 
   All technicals are derived price math — they inform *when / at what level* to
@@ -259,7 +263,7 @@ def _trailing_return(closes, lookback_days: int):
     return _pct(closes.iloc[-1], closes.iloc[-1 - lookback_days])
 
 
-def fetch_technicals(t, ticker: str, notes: list) -> dict:
+def fetch_technicals(t, ticker: str, notes: list, float_shares=None, chart_path=None) -> dict:
     """Entry-timing / positioning lens computed from daily price data in pandas.
 
     All values are price-derived math (no ta-lib): moving averages and distance
@@ -271,7 +275,7 @@ def fetch_technicals(t, ticker: str, notes: list) -> dict:
     try:
         import pandas as pd  # noqa: F401 — bundled with yfinance
 
-        hist = t.history(period="2y", interval="1d")
+        hist = t.history(period="3y", interval="1d")
         if hist is None or hist.empty or "Close" not in hist:
             notes.append("technicals: daily price history empty")
             return tech
@@ -356,6 +360,25 @@ def fetch_technicals(t, ticker: str, notes: list) -> dict:
                     }
         except Exception as e:
             notes.append(f"technicals.volume: {e}")
+
+        # Chart structure (trend, divergences, chips, levels, break level) + chart
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import technical_structure as ts
+
+            structure, s_notes = ts.analyze(hist, float_shares)
+            notes.extend(s_notes)
+            if structure:
+                tech["structure"] = structure
+                if chart_path:
+                    try:
+                        df = hist[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["High", "Low", "Close"])
+                        ts.render_chart(df, structure, float_shares, str(chart_path), ticker)
+                        tech["chart"] = Path(chart_path).name
+                    except Exception as e:
+                        notes.append(f"technicals.chart: {e} (pip install matplotlib)")
+        except Exception as e:
+            notes.append(f"technicals.structure: {e}")
 
     except Exception as e:
         notes.append(f"technicals: {e}")
@@ -452,8 +475,10 @@ def main() -> None:
     history = fetch_quarterly_history(t, notes)
     log(f"fetching 3-year price history for {ticker}…")
     price_history = fetch_price_history(t, notes)
-    log(f"computing technicals (MAs, RSI, returns, RS vs SPY) for {ticker}…")
-    technicals = fetch_technicals(t, ticker, notes)
+    log(f"computing technicals + chart structure for {ticker}…")
+    technicals = fetch_technicals(t, ticker, notes,
+                                  float_shares=info.get("floatShares") or info.get("sharesOutstanding"),
+                                  chart_path=out_path.parent / f"chart_{ticker}.png")
     log(f"fetching EDGAR annual revenue cross-check for {ticker}…")
     edgar = fetch_edgar_cross_check(ticker, notes)
 
