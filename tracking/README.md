@@ -131,7 +131,11 @@ Written by `scripts/fetch_snaptrade.py` (invoked by `/sync-portfolio`). One whol
   "fetched_at": "2026-07-12T14:03:22.512Z",
   "source": "snaptrade",
   "lookback_days": 90,
-  "totals": { "market_value": 51230.44, "cash": 2103.11, "currency": "USD" },
+  "totals": {
+    "market_value": 51230.44, "cash": 2103.11,
+    "cash_collateral_reserved": 1500.0, "cash_free": 603.11, "cash_reported": 2140.55,
+    "options_market_value": -42.0, "currency": "USD"
+  },
   "accounts": [
     {
       "id": "<snaptrade-account-uuid>",
@@ -140,7 +144,19 @@ Written by `scripts/fetch_snaptrade.py` (invoked by `/sync-portfolio`). One whol
       "institution": "Fidelity",
       "type": "TFSA/RRSP/individual/etc",
       "sync_status": "2026-07-12T13:58:01Z",
-      "balance": { "total": 51230.44, "currency": "USD", "cash": 2103.11 },
+      "balance": {
+        "total": 51230.44,
+        "currency": "USD",
+        "cash": 2103.11,
+        "cash_breakdown": { "collateral_reserved": 1500.0, "free": 603.11 },
+        "cash_reported": 2140.55,
+        "cash_check": {
+          "total_minus_investments": 2103.11,
+          "buying_power_plus_collateral": 2103.11,
+          "agree": true,
+          "reported_lag": 37.44
+        }
+      },
       "positions": [
         {
           "symbol": "NVDA",
@@ -150,7 +166,8 @@ Written by `scripts/fetch_snaptrade.py` (invoked by `/sync-portfolio`). One whol
           "market_value": 2562.0,
           "currency": "USD",
           "average_purchase_price": 180.2,
-          "open_pnl": 399.6
+          "open_pnl": 399.6,
+          "cash_equivalent": false
         }
       ],
       "activities": [
@@ -177,6 +194,7 @@ Notes:
 - Account numbers are masked to the last 4 digits before hitting disk; the full number is never stored.
 - `activities` covers only the trailing `lookback_days` window (default 90) — it is a reconciliation aid for `trades.json`, not a full trade history.
 - Positions are sorted by market value descending; activities by date descending.
+- **`balance.cash` is derived, not SnapTrade's cash line.** Fidelity's core-sweep (SPAXX) units — reported both as the `cash_equivalent: true` position and as `/balances` cash — can lag the account's real cash by thousands, while `total` and security prices are current. So `cash` = `total` − non-cash-equivalent positions − net options value: the actual cash holdings (Fidelity's "Cash and credits"), **including** cash reserved as option collateral. `cash_breakdown` splits it: `collateral_reserved` = Σ short puts strike × multiplier × contracts; `free` = SnapTrade `buying_power` (settled, unreserved — Fidelity's "Available to trade"). `cash_check` cross-validates (`free + collateral_reserved` must equal `cash` within $1; `agree: false` → a snapshot warning, `cash` keeps the first method) and records `reported_lag` = `cash_reported` − `cash`. The cash-equivalent position's own `market_value` carries the lagged figure. Snapshots from before this change lack these fields — their `cash` is the raw SnapTrade line.
 - `warnings[]` records sub-endpoint failures (e.g. one account's activities endpoint down) — the snapshot is still valid, just partial.
 
 ---

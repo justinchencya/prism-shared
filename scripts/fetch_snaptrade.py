@@ -18,9 +18,11 @@ Reads:
 Writes:
   <output-path>   JSON snapshot:
     fetched_at    — ISO-8601 UTC timestamp (consumers judge staleness from this)
-    accounts[]    — per connected account: institution, masked number, total
-                    balance, cash, positions[], options[], recent activities[]
-    totals        — market value / cash / options market value across accounts
+    accounts[]    — per connected account: institution, masked number,
+                    balance (total, cash + breakdown + cross-check — see
+                    derive_cash), positions[], options[], recent activities[]
+    totals        — market value / cash (+ collateral / free / reported) /
+                    options market value across accounts
     warnings[]    — per-source degradations (a dead sub-endpoint never crashes
                     the whole fetch)
 
@@ -60,6 +62,7 @@ DEFAULT_LOOKBACK_DAYS = 90
 ACTIVITIES_PAGE_SIZE = 250
 OPTION_MULTIPLIER = 100        # shares per standard contract
 MINI_OPTION_MULTIPLIER = 10    # shares per mini contract
+CASH_TOLERANCE = 1.00          # $ — cash derivations must agree within this
 
 
 def log(msg: str) -> None:
@@ -173,6 +176,7 @@ def normalize_position(position: dict) -> dict:
         "currency": sym["currency"],
         "average_purchase_price": position.get("average_purchase_price"),
         "open_pnl": position.get("open_pnl"),
+        "cash_equivalent": bool(position.get("cash_equivalent")),
     }
 
 
@@ -213,6 +217,79 @@ def normalize_option(holding: dict) -> dict:
         "market_value": market_value,
         "average_purchase_price": holding.get("average_purchase_price"),
         "currency": dig(underlying, "currency", "code", default="USD"),
+    }
+
+
+def _num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def derive_cash(total, positions: list, options: list, reported, buying_power,
+                account_label: str, warnings: list) -> dict:
+    """Actual cash holdings, derived — not SnapTrade's cash line.
+
+    Fidelity's core sweep (SPAXX) units — which SnapTrade reports as both the
+    cash-equivalent position and /balances `cash` — can lag the account's real
+    cash by thousands of dollars, while the account total and the securities
+    prices are current. So:
+
+      cash                 = total − non-cash positions − net options value
+                             (the "Cash and credits" figure Fidelity shows;
+                             includes cash reserved as option collateral)
+      collateral_reserved  = Σ short puts: strike × multiplier × |contracts|
+      free                 = SnapTrade buying_power (settled, unreserved)
+
+    Cross-check: buying_power + collateral_reserved must equal `cash` within
+    CASH_TOLERANCE. It is validation only — it never overrides `cash`. On a
+    margin account (different reserve rules) it is expected to disagree, which
+    surfaces as a warning rather than a wrong number. Short calls reserve no
+    cash here — they are assumed covered by held shares.
+    """
+    investments = None
+    if _num(total) and all(_num(p["market_value"]) for p in positions
+                           if not p["cash_equivalent"]) \
+            and all(_num(o["market_value"]) for o in options):
+        investments = round(sum(p["market_value"] for p in positions
+                                if not p["cash_equivalent"])
+                            + sum(o["market_value"] for o in options), 2)
+
+    collateral = round(sum(o["strike"] * o["multiplier"] * abs(o["contracts"])
+                           for o in options
+                           if o["option_type"] == "PUT" and o["direction"] == "Short"
+                           and _num(o["strike"]) and _num(o["contracts"])), 2)
+
+    method_a = round(total - investments, 2) if investments is not None else None
+    method_b = round(buying_power + collateral, 2) if _num(buying_power) else None
+
+    if method_a is not None:
+        cash = method_a
+    else:
+        cash = reported if _num(reported) else None
+        warnings.append(f"cash({account_label}): could not derive cash from total − "
+                        f"investments; fell back to SnapTrade's reported cash")
+
+    agree = None
+    if method_a is not None and method_b is not None:
+        agree = abs(method_a - method_b) <= CASH_TOLERANCE
+        if not agree:
+            warnings.append(f"cash({account_label}): derivations disagree — total − "
+                            f"investments = {method_a:,.2f} vs buying_power + collateral = "
+                            f"{method_b:,.2f}; using the former")
+
+    lag = round(reported - cash, 2) if _num(reported) and _num(cash) else None
+    return {
+        "cash": cash,
+        "cash_breakdown": {
+            "collateral_reserved": collateral,
+            "free": round(buying_power, 2) if _num(buying_power) else None,
+        },
+        "cash_reported": reported,
+        "cash_check": {
+            "total_minus_investments": method_a,
+            "buying_power_plus_collateral": method_b,
+            "agree": agree,
+            "reported_lag": lag,
+        },
     }
 
 
@@ -323,11 +400,13 @@ def main() -> None:
             warnings.append(f"positions({account_id}): {err}")
             raw_positions = []
 
-        cash = None
+        reported_cash = buying_power = None
         try:
             for bal in client.get(f"/accounts/{account_id}/balances") or []:
-                if isinstance(bal.get("cash"), (int, float)):
-                    cash = round((cash or 0.0) + bal["cash"], 2)
+                if _num(bal.get("cash")):
+                    reported_cash = round((reported_cash or 0.0) + bal["cash"], 2)
+                if _num(bal.get("buying_power")):
+                    buying_power = round((buying_power or 0.0) + bal["buying_power"], 2)
         except Exception as err:
             warnings.append(f"balances({account_id}): {err}")
 
@@ -339,6 +418,12 @@ def main() -> None:
                       for a in fetch_activities(client, account_id, start_date, end_date, warnings)]
         activities.sort(key=lambda a: a["date"], reverse=True)
 
+        positions = sorted((normalize_position(p) for p in raw_positions or []),
+                           key=lambda p: p["market_value"] or 0, reverse=True)
+        total = dig(raw, "balance", "total", "amount")
+        cash = derive_cash(total, positions, options, reported_cash, buying_power,
+                           raw.get("name") or account_id, warnings)
+
         accounts.append({
             "id": account_id,
             "name": raw.get("name") or "",
@@ -347,20 +432,19 @@ def main() -> None:
             "type": dig(raw, "meta", "type", default=raw.get("raw_type") or ""),
             "sync_status": dig(raw, "sync_status", "holdings", "last_successful_sync", default=""),
             "balance": {
-                "total": dig(raw, "balance", "total", "amount"),
+                "total": total,
                 "currency": dig(raw, "balance", "total", "currency", default="USD"),
-                "cash": cash,
+                **cash,
             },
-            "positions": sorted((normalize_position(p) for p in raw_positions or []),
-                                key=lambda p: p["market_value"] or 0, reverse=True),
+            "positions": positions,
             "options": options,
             "activities": activities,
         })
 
     total_value = sum(a["balance"]["total"] for a in accounts
                       if isinstance(a["balance"]["total"], (int, float)))
-    total_cash = sum(a["balance"]["cash"] for a in accounts
-                     if isinstance(a["balance"]["cash"], (int, float)))
+    def total_of(get):
+        return round(sum(v for v in (get(a["balance"]) for a in accounts) if _num(v)), 2)
     total_options = sum(o["market_value"] for a in accounts for o in a["options"]
                         if isinstance(o["market_value"], (int, float)))
 
@@ -368,7 +452,11 @@ def main() -> None:
         "fetched_at": now_iso(),
         "source": "snaptrade",
         "lookback_days": lookback,
-        "totals": {"market_value": round(total_value, 2), "cash": round(total_cash, 2),
+        "totals": {"market_value": round(total_value, 2),
+                   "cash": total_of(lambda b: b["cash"]),
+                   "cash_collateral_reserved": total_of(lambda b: b["cash_breakdown"]["collateral_reserved"]),
+                   "cash_free": total_of(lambda b: b["cash_breakdown"]["free"]),
+                   "cash_reported": total_of(lambda b: b["cash_reported"]),
                    "options_market_value": round(total_options, 2), "currency": "USD"},
         "accounts": accounts,
         "warnings": warnings,
