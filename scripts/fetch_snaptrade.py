@@ -3,10 +3,13 @@
 Fetch a normalized brokerage snapshot from SnapTrade (Personal API key).
 
 Usage:
-  fetch_snaptrade.py [output-path] [--lookback-days N]
+  fetch_snaptrade.py [output-path] [--lookback-days N] [--ledger PATH]
 
   output-path       defaults to tracking/brokerage-snapshot.json (repo-relative)
   --lookback-days   activity history window, default 90
+  --ledger PATH     also merge activities into the trade ledger (scripts/ledger.py)
+                    by SnapTrade activity id; an empty ledger gets the account's
+                    full history (from its first transaction) instead of the window
 
 Reads:
   SNAPTRADE_CLIENT_ID + SNAPTRADE_CONSUMER_KEY from the environment or
@@ -50,6 +53,7 @@ import hmac
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,6 +64,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from symbols import canonical  # noqa: E402
+import ledger as ledger_mod  # noqa: E402
 
 BASE = "https://api.snaptrade.com"
 API_PREFIX = "/api/v1"
@@ -67,6 +72,7 @@ DEFAULT_LOOKBACK_DAYS = 90
 ACTIVITIES_PAGE_SIZE = 250
 OPTION_MULTIPLIER = 100        # shares per standard contract
 MINI_OPTION_MULTIPLIER = 10    # shares per mini contract
+RATE_LIMIT_RETRIES = 4         # HTTP 429: back off and retry (15s, 30s, 45s, 60s)
 CASH_TOLERANCE = 1.00          # $ — cash derivations must agree within this
 
 
@@ -111,7 +117,19 @@ class SnapTradeClient:
         return b64encode(digest).decode()
 
     def get(self, endpoint: str, params: dict = None, timeout: int = 30):
-        """Signed GET. endpoint is relative to /api/v1. Raises on HTTP/parse error."""
+        """Signed GET with backoff on HTTP 429. endpoint is relative to /api/v1.
+        Raises on HTTP/parse error."""
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            try:
+                return self._get(endpoint, params, timeout)
+            except urllib.error.HTTPError as err:
+                if err.code != 429 or attempt == RATE_LIMIT_RETRIES:
+                    raise
+                wait = 15 * (attempt + 1)
+                log(f"rate-limited on {endpoint}; retrying in {wait}s")
+                time.sleep(wait)
+
+    def _get(self, endpoint: str, params: dict = None, timeout: int = 30):
         path = API_PREFIX + endpoint
         query_params = {"clientId": self.client_id,
                         "timestamp": str(int(datetime.now(timezone.utc).timestamp()))}
@@ -320,7 +338,9 @@ def normalize_activity(activity: dict) -> dict:
     if isinstance(sym, dict):  # some payloads nest one level deeper
         sym = sym.get("symbol") or ""
     trade_date = activity.get("trade_date") or activity.get("settlement_date") or ""
+    option = dig(activity, "option_symbol", "ticker", default="") or ""
     return {
+        "id": activity.get("id") or "",
         "date": str(trade_date)[:10],
         "type": activity.get("type") or "",
         "symbol": canonical(sym),
@@ -328,6 +348,8 @@ def normalize_activity(activity: dict) -> dict:
         "units": activity.get("units"),
         "price": activity.get("price"),
         "amount": activity.get("amount"),
+        "fee": activity.get("fee"),
+        "option": option.strip() if isinstance(option, str) else "",
         "currency": dig(activity, "currency", "code", default="USD"),
         "description": activity.get("description") or "",
     }
@@ -367,14 +389,23 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     load_dotenv(repo_root)
 
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    argv, args, opts = sys.argv[1:], [], {}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--"):
+            key, eq, val = a[2:].partition("=")
+            if not eq and i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                val, i = argv[i + 1], i + 1
+            opts[key] = val
+        else:
+            args.append(a)
+        i += 1
     out_path = Path(args[0]) if args else repo_root / "tracking" / "brokerage-snapshot.json"
-    lookback = DEFAULT_LOOKBACK_DAYS
-    for i, arg in enumerate(sys.argv[1:], 1):
-        if arg == "--lookback-days" and i < len(sys.argv) - 1:
-            lookback = int(sys.argv[i + 1])
-        elif arg.startswith("--lookback-days="):
-            lookback = int(arg.split("=", 1)[1])
+    lookback = int(opts.get("lookback-days") or DEFAULT_LOOKBACK_DAYS)
+    ledger_path = Path(opts["ledger"]) if opts.get("ledger") else None
+    ledger = ledger_mod.load(ledger_path) if ledger_path else None
+    ledger_added = 0
 
     client_id = os.environ.get("SNAPTRADE_CLIENT_ID", "").strip()
     consumer_key = os.environ.get("SNAPTRADE_CONSUMER_KEY", "").strip()
@@ -426,6 +457,17 @@ def main() -> None:
                       for a in fetch_activities(client, account_id, start_date, end_date, warnings)]
         activities.sort(key=lambda a: a["date"], reverse=True)
 
+        if ledger is not None:
+            history = activities
+            mine = [x for x in ledger["activities"] if x.get("account") == mask_number(raw.get("number"))]
+            first = dig(raw, "sync_status", "transactions", "first_transaction_date")
+            if not mine and first and first < start_date:
+                log(f"ledger: first sync for this account — fetching full history from {first}")
+                history = [normalize_activity(a)
+                           for a in fetch_activities(client, account_id, first, end_date, warnings)]
+            ledger, n = ledger_mod.merge(ledger, history, mask_number(raw.get("number")))
+            ledger_added += n
+
         positions = sorted((normalize_position(p) for p in raw_positions or []),
                            key=lambda p: p["market_value"] or 0, reverse=True)
         total = dig(raw, "balance", "total", "amount")
@@ -469,6 +511,16 @@ def main() -> None:
         "accounts": accounts,
         "warnings": warnings,
     }
+
+    if ledger is not None:
+        all_positions = [p for a in accounts for p in a["positions"]]
+        trades = ledger_mod.stock_trades(ledger, all_positions)
+        warnings.extend(ledger_mod.cross_check(trades, all_positions))
+        ledger["updated_at"] = snapshot["fetched_at"]
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_path.write_text(json.dumps(ledger, indent=1) + "\n")
+        log(f"ledger: {ledger_added} new activit{'y' if ledger_added == 1 else 'ies'} merged → "
+            f"{ledger_path} ({len(ledger['activities'])} total since {ledger['history_start']})")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(snapshot, indent=2) + "\n")

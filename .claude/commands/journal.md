@@ -4,7 +4,7 @@ description: Capture a free-form reflection, hesitation, imagined scenario, or r
 
 Capture a **journal entry** — a reflection, hesitation, imagined scenario, or a decision you could have made but didn't — into the Prism timeline so you can look back and reflect on your thinking process. This is the user's own thinking log; not advice, no boilerplate.
 
-A journal entry does **no** research and writes **no** Notion. It appends to `tracking/journal.json`, optionally linking research runs and tickers, regenerates the dashboard when `scripts/dashboard_due.py` says it's due, and lands on its own branch + PR (same git flow as `/scout`).
+A journal entry does **no** research. It is where the user's reasoning about trades lives — the trades themselves come from the broker ledger. It appends to `tracking/journal.json`, optionally linking research runs and tickers, regenerates the dashboard when `scripts/dashboard_due.py` says it's due, and lands on its own branch + PR (same git flow as `/scout`).
 
 Everything the user typed after `/journal` is the **raw reflection** — a seed to refine, not the final entry. You help the user turn their rough thought into clearer prose before it's stored (e.g. `/journal hesitated on adding to NVDA before earnings — worried the AI-capex narrative was already fully priced`). If the user typed nothing after `/journal`, ask them what they want to record before proceeding — never write an empty entry.
 

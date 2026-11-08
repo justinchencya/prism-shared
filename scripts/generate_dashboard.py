@@ -18,7 +18,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 # every consumer (see scripts/symbols.py, scripts/research_index.py).
 from symbols import economic_group as _norm_ticker, quote_symbol  # noqa: E402
 from research_index import (  # noqa: E402,F401
-    load_research_runs, parse_run_verdicts, build_verdict_lookup, resolve_run)
+    load_research_runs, parse_run_verdicts, build_verdict_lookup, resolve_run, coverage)
+import ledger  # noqa: E402
+
+# A trade links to the newest research run covering its ticker dated on/before
+# the trade, if that run is at most this old (matches /sync-portfolio's
+# stale-research threshold).
+RESEARCH_LINK_MAX_AGE_DAYS = 180
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +38,52 @@ def load_json(path: Path, default):
         return json.load(f)
 
 
-def load_trades() -> list:
-    data = load_json(TRACKING_DIR / "trades.json", {"trades": []})
-    return data.get("trades", [])
+def load_trades() -> tuple:
+    """Stock trades from the broker ledger (tracking/ledger.json, merged by
+    /sync-portfolio — nothing is logged by hand). Returns (trades, opening
+    units for holdings that predate the ledger, the ledger's history start)."""
+    led = ledger.load(TRACKING_DIR / "ledger.json")
+    snap = load_json(TRACKING_DIR / "brokerage-snapshot.json", {})
+    positions = [p for a in snap.get("accounts", []) for p in a.get("positions", [])]
+    trades = ledger.stock_trades(led, positions)
+    return trades, ledger.opening_units(trades, positions), led.get("history_start")
+
+
+def add_openings(trades: list, openings: dict, start: str | None, history: dict) -> list:
+    """Synthesize an opening lot per pre-ledger holding, priced at the first close
+    on/after the ledger's start (its real cost basis predates the record)."""
+    if not openings or not start:
+        return trades
+    out = []
+    for tk, units in sorted(openings.items()):
+        close = close_on_or_after(history.get(tk, {}), start)
+        out.append({"id": f"opening-{tk}", "date": start, "ticker": tk, "action": "buy",
+                    "shares": units, "price_per_share": close,
+                    "amount_usd": round(units * close, 2) if close else None, "kind": "opening"})
+    return sorted(out + trades, key=lambda t: (t["date"], t["action"] != "buy", t["id"]))
+
+
+def link_research(trades: list) -> list:
+    """Attach the research behind each broker fill: the newest run covering the
+    ticker dated on/before the fill, within RESEARCH_LINK_MAX_AGE_DAYS."""
+    cov = coverage(sorted({t["ticker"] for t in trades}), REPORTS_DIR)
+    out = []
+    for t in trades:
+        links = []
+        if t.get("kind", "fill") == "fill":
+            for r in cov.get(t["ticker"], []):
+                lag = _days_lag(t["date"], r["date"])
+                if lag is not None and 0 <= lag <= RESEARCH_LINK_MAX_AGE_DAYS:
+                    links = [{"run": r["run"], "date": r["date"], "report_path": r["report_path"],
+                              "market_verdict": r["verdict"]}]
+                    break
+        out.append({**t, "linked_research": links})
+    return out
+
+
+def is_decision(t: dict) -> bool:
+    """A fill the user placed — not a synthesized opening lot or a corporate action."""
+    return t.get("kind", "fill") == "fill"
 
 
 def load_journal() -> list:
@@ -197,7 +246,7 @@ def build_timeline(runs: list, trades: list, journal: list | None = None, verdic
         events.append({"type": "research", **r})
     for j in (journal or []):
         events.append({"type": "journal", **j})
-    for t in trades:
+    for t in (t for t in trades if is_decision(t)):
         ticker = t["ticker"]
         enriched_links = [{**link, "market_verdict": _link_verdict(link, ticker, verdict_lookup, slugs)}
                           for link in t.get("linked_research", [])]
@@ -232,7 +281,7 @@ def build_alignment(trades: list, verdict_lookup: dict | None = None, prices: di
     prices = prices or {}
     slugs = slugs or set()
     rows = []
-    for trade in trades:
+    for trade in (t for t in trades if is_decision(t)):
         links = trade.get("linked_research", [])
         ticker = trade["ticker"]
 
@@ -560,7 +609,7 @@ def build_pnl_drivers(trades: list, prices: dict, alignment_rows: list) -> list:
         tts = sorted((t for t in trades if t["ticker"] == ticker),
                      key=lambda t: t.get("date", ""))
         counts = {"aligned": 0, "misaligned": 0, "neutral": 0, "unlinked": 0}
-        for t in tts:
+        for t in (t for t in tts if is_decision(t)):
             alignment = align_by_id.get(t["id"], {}).get("alignment", "unlinked")
             counts[alignment] = counts.get(alignment, 0) + 1
 
@@ -590,7 +639,7 @@ def build_pnl_drivers(trades: list, prices: dict, alignment_rows: list) -> list:
 
         out.append({"ticker": ticker, "pnl_usd": pnl_usd, "pnl_pct": pnl_pct,
                     "reason": reason, "alignment_counts": counts,
-                    "n_trades": len(tts)})
+                    "n_trades": sum(1 for t in tts if is_decision(t))})
     out.sort(key=lambda d: (d["pnl_usd"] is None, -(d["pnl_usd"] or 0)))
     return out
 
@@ -629,7 +678,7 @@ def build_per_ticker(
 
         result[ticker] = {
             "ticker": ticker,
-            "trades": ticker_trades,
+            "trades": [t for t in ticker_trades if is_decision(t)],
             "research_history": research_history,
             "current_price": current_price,
             "pnl_pct": pnl_pct,
@@ -1390,7 +1439,7 @@ def main():
         preview = sys.argv[i + 1]
 
     print("Loading data…")
-    trades = load_trades()
+    trades, openings, ledger_start = load_trades()
     runs = load_research_runs()
     journal = load_journal()
     hypotheticals = load_hypotheticals()
@@ -1409,7 +1458,7 @@ def main():
     # Daily price history for the P&L value chart (only fully-priced tickers),
     # plus whatever the active scenarios need on top of the actual set
     first_trade_date = min((t["date"] for t in trades if t.get("date")), default=None)
-    history_tickers = {t["ticker"] for t in trades if t.get("shares") and t.get("price_per_share")}
+    history_tickers = {t["ticker"] for t in trades if t.get("shares") and t.get("price_per_share")} | set(openings)
     scen_starts = [t["date"] for sc in scenarios if sc.get("type") == "standalone"
                    for t in sc.get("trades", []) if t.get("date")]
     hist_start = min([d for d in [first_trade_date] + scen_starts if d], default=None)
@@ -1417,6 +1466,7 @@ def main():
     if hist_tickers and hist_start:
         print(f"Fetching price history since {hist_start} for: {', '.join(sorted(hist_tickers))}")
     history = fetch_price_history(hist_tickers, hist_start) if hist_start else {}
+    trades = link_research(add_openings(trades, openings, ledger_start, history))
 
     pnl_series = build_value_series(trades, history)
     whatif = build_whatif_series(scenarios, trades, history, pnl_series["excluded"])

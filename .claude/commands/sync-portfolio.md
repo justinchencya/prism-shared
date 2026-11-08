@@ -1,13 +1,13 @@
 ---
-description: Pull the live brokerage state (accounts, balances, positions, open option contracts, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, check it against trades.json, and review the portfolio (concentration, cash, P&L, options, held names with no or stale research). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
+description: Pull the live brokerage state (accounts, balances, positions, open option contracts, recent activity) from SnapTrade into tracking/brokerage-snapshot.json, merge the brokerage's activity history into the trade ledger (tracking/ledger.json), and review the portfolio (concentration, cash, P&L, options, held names with no or stale research). Degrades to a review-only pass over the committed snapshot when SnapTrade credentials are unavailable (e.g. a cloud sandbox without the keys). Lands on its own sync-portfolio/<timestamp> branch + PR.
 ---
 
-Sync the user's **actual brokerage state** into Prism and review it. The brokerage snapshot is the **source of truth for holdings** — what is really held, how much, at what cost. `tracking/trades.json` is the intentional, research-linked trade log, and `reports/` holds every research run. This command refreshes the holdings truth, checks the trade log against it, and then reads the portfolio critically.
+Sync the user's **actual brokerage state** into Prism and review it. The brokerage is the **source of truth** for both what is held (the snapshot) and what traded (`tracking/ledger.json` — the broker's own activity history; nothing is logged by hand). `reports/` holds every research run; the dashboard links each fill to the research behind it automatically. This command refreshes both, cross-checks them, and then reads the portfolio critically.
 
 Two modes, chosen automatically by capability, never by asking:
 
-- **Sync mode** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are available (environment or `<repo-root>/.env`): fetch live, check trades, review, commit on a branch + PR.
-- **Review-only mode** — credentials absent (typical for a cloud sandbox that doesn't carry the keys): no fetch, no writes, no git. Read the committed `tracking/brokerage-snapshot.json`, lead with a staleness warning derived from its `fetched_at`, and run the same trade check + review (Steps 4–5) against it. If the snapshot is still the empty template (`fetched_at: null`), stop: `"No brokerage snapshot yet and SnapTrade credentials are unavailable here — run /sync-portfolio from an environment with SNAPTRADE_CLIENT_ID / SNAPTRADE_CONSUMER_KEY configured."`
+- **Sync mode** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are available (environment or `<repo-root>/.env`): fetch live, merge the ledger, review, commit on a branch + PR.
+- **Review-only mode** — credentials absent (typical for a cloud sandbox that doesn't carry the keys): no fetch, no writes, no git. Read the committed `tracking/brokerage-snapshot.json`, lead with a staleness warning derived from its `fetched_at`, and run the same review (Steps 4–5) against it and the committed ledger. If the snapshot is still the empty template (`fetched_at: null`), stop: `"No brokerage snapshot yet and SnapTrade credentials are unavailable here — run /sync-portfolio from an environment with SNAPTRADE_CLIENT_ID / SNAPTRADE_CONSUMER_KEY configured."`
 
 The SnapTrade Fidelity integration is **read-only** (no trade placement); this command never mutates anything at the brokerage. Everything after `/sync-portfolio` is an optional focus hint (e.g. `/sync-portfolio concentration` or `/sync-portfolio just the options`) — honor it in the review; with no hint, run the full review.
 
@@ -25,29 +25,18 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
      ```
    - Also resolve today's date (`date +%Y-%m-%d`) — use it everywhere below; never a date carried in context.
 
-3. **Fetch the snapshot** — on the branch, run:
+3. **Fetch the snapshot and merge the ledger** — on the branch, run:
    ```bash
-   python3 scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json
+   python3 scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json --ledger tracking/ledger.json
    ```
-   - Exit 0 → snapshot written (accounts, positions, open option contracts, activities); surface any warnings the script printed (a degraded sub-source is worth the user knowing about, not worth stopping for).
+   - Exit 0 → snapshot written (accounts, positions, open option contracts, activities) and every fetched activity merged into the ledger by SnapTrade activity id (idempotent; an empty ledger gets the account's full history). Surface any warnings the script printed (a degraded sub-source is worth the user knowing about, not worth stopping for). SnapTrade rate-limits; the script backs off on its own.
    - Exit 2 (credentials missing after all — e.g. empty values) → drop back cleanly (`git switch main && git branch -D sync-portfolio/<id>`) and continue in review-only mode from the committed snapshot.
    - Exit 1 (credentials rejected / network / no accounts) → report the script's stderr, clean up the branch the same way, and stop.
 
-4. **Check the trade log against the snapshot** (read-only — this step never writes): run
-
-   ```bash
-   python3 scripts/reconcile_trades.py --json
-   ```
-
-   and report what it returns — don't re-derive matches by hand. It matches stock BUY/SELL activities in the lookback window to `trades.json` on canonical symbol (`BRKB` == `BRK-B`; GOOGL ≠ GOOG), direction, and a trading-day date window (broker dates run up to a day after the trade, logs sometimes a day late), price-first and quantity-aware. Its rules are in the script's docstring.
-
-   - **`unlogged` / `partially_logged`** — broker fills the log doesn't cover. **Never write `trades.json` here** — it mirrors the Notion Investment Log 1:1 and is owned by `/log-trade`; list the notable ones and suggest `/log-trade` per trade.
-   - **`automatic`** — broker-initiated rows (ESPP / SPP purchases, conversions): mention, don't count as unlogged.
-   - **`logged_not_at_broker`** — log entries no broker fill absorbed (wrong date/size in the log, or another account). `pending` ones are too recent to have posted — ignore.
-   - **`net_residual_by_symbol`** — in-window share drift (broker − log). Drift vs all-time holdings is not reported: `trades.json` doesn't cover holdings that predate it.
-   - **`skipped`** — option fills (not logged in `trades.json`), cash-sweep and non-trade rows: one line of counts.
-
-   If `unlogged`, `partially_logged`, and `logged_not_at_broker` are all empty, say `"Trade log is consistent with the brokerage."` and move on.
+4. **Ledger check** (read-only): run `python3 scripts/ledger.py --json` and report:
+   - **New activity** — how many activities this sync merged (the fetch's `ledger:` log line) and the notable new stock/option fills.
+   - **Cross-check** — `warnings` lists symbols where the ledger's implied shares (opening lots + history) disagree with the snapshot. Empty → say `"Ledger reconciles with holdings."` Non-empty → show them; never patch the ledger by hand (it only ever holds what the broker returned).
+   - **Opening lots** — holdings that predate the ledger's `history_start` (their cost basis predates the record; the dashboard prices them at the first close on/after it). One line, only if it changed since the last sync.
 
 5. **Review** — the chat-facing product. Read the snapshot (plus the `reports/` runs covering held names) and write a terse, falsifiable review — Prism voice, investor stance (mostly multi-year holds plus a small speculative sleeve — don't judge an evidently short-term position by a multi-year bar), no disclaimers:
 
@@ -61,43 +50,44 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
    - **Research coverage** — run `python3 scripts/research_index.py <every held symbol and option underlying> --json` once; it returns each name's covering runs (newest first) with Market verdicts, matching symbols canonically. Don't grep reports by hand.
    - **Held without research** — held positions (excluding index funds and `cash_equivalent` positions) with no covering run: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. The snapshot knows *what* is held; this flags *what lacks a why*.
    - **Stale research** — held names whose most recent covering run is >6 months old (run date = the report dir's date prefix). Give the run, its date, and its Market verdict for the name, and suggest a refresh `/research` question.
-   - **Recent activity** — notable buys/sells/dividends/deposits from the lookback window, cross-linked to `trades.json`/journal entries where they exist.
+   - **Recent activity** — notable buys/sells/dividends/deposits from the lookback window, cross-linked to `/journal` entries where they exist.
    - If the user gave a focus hint, weight the review toward it. State "unknown" where the snapshot doesn't answer something; never fill gaps fluently.
 
    In review-only mode Steps 4–5 run against the committed snapshot; nothing is written.
 
-6. **Ship gate** (sync mode only) — **show the user** the file to be committed: `tracking/brokerage-snapshot.json`. The snapshot is not a dashboard input, so there's no dashboard check or regen. Run `python3 scripts/check_consistency.py --paths tracking/brokerage-snapshot.json`; if it exits 1, show its output with the ship gate (a fetcher bug, not something to patch in the snapshot).
+6. **Ship gate** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json` and `tracking/ledger.json`. The ledger is a dashboard input, so run `python3 scripts/dashboard_due.py` and keep its one-line decision (per **Git convention** in `CLAUDE.md`). Run `python3 scripts/check_consistency.py --paths tracking/brokerage-snapshot.json tracking/ledger.json`; if it exits 1, show its output with the ship gate (a fetcher bug, not something to patch in the data).
 
    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this portfolio sync?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"
 
-   Set the `preview` of both shipping options to the review's headline lines (concentration, cash, unlogged-trade count, held-without-research count).
+   Set the `preview` of both shipping options to the review's headline lines (concentration, cash, new ledger activity + cross-check result, held-without-research count) plus the dashboard decision line.
 
    **Decline path** ("Don't commit"): `git switch main && git branch -D sync-portfolio/<id>` (work returns to the working tree; nothing was pushed); report and stop. Otherwise:
    ```bash
-   git add tracking/brokerage-snapshot.json
+   python3 scripts/dashboard_due.py && python3 scripts/generate_dashboard.py   # regen only when due
+   git add tracking/brokerage-snapshot.json tracking/ledger.json   # + dashboard/index.html if regenerated
    git commit -m "sync-portfolio: <YYYY-MM-DD>"
    git push -u origin sync-portfolio/<id>
    gh pr create --base main --head sync-portfolio/<id> --title "sync-portfolio: <YYYY-MM-DD>" --body "<one line: N accounts, M positions>"
    ```
    No second prompt — "Ship it" → `gh pr merge --squash --delete-branch`; otherwise leave it open. Either way finish on `main` (`git switch main`). Any git/`gh` failure: report and stop, no destructive retry.
 
-7. **Report back** — mode used, snapshot age, accounts/positions synced, unlogged trades suggested for `/log-trade`, and the PR URL if opened.
+7. **Report back** — mode used, snapshot age, accounts/positions synced, new ledger activity and the cross-check result, the dashboard decision, and the PR URL if opened.
 
 ## Security notes
 
 - The `consumerKey` is a Personal API key with full read access to the connected brokerage. Never print, echo, or commit it; never copy it out of `.env`/env. The script signs requests locally with it.
-- The snapshot itself contains personal financial data — it belongs in the private prism repo only. In prism-shared, `tracking/brokerage-snapshot.json` stays the empty template (same rule as every other tracking file).
+- The snapshot and the ledger contain personal financial data — they belong in the private prism repo only. In prism-shared, `tracking/brokerage-snapshot.json` and `tracking/ledger.json` stay empty templates (same rule as every other tracking file).
 
 ## Examples
 
 `/sync-portfolio`
-→ creds found → branch `sync-portfolio/2026-07-12-091500` → fetch → 1 unlogged VRT buy (→ suggest `/log-trade`) → review: 61% top-3 concentration, 4% cash, 3 names held with no research run on file (→ ready-to-run `/research`), NOW's last research 14 months old → ship gate → commit + PR.
+→ creds found → branch `sync-portfolio/2026-07-12-091500` → fetch + ledger merge (14 new activities, reconciles with holdings) → review: 61% top-3 concentration, 4% cash, 3 names held with no research run on file (→ ready-to-run `/research`), NOW's last research 14 months old → ship gate → commit + PR.
 
 `/sync-portfolio concentration`
 → same flow; the review leads with concentration and position sizing.
 
 `/sync-portfolio` (on a phone / cloud sandbox without the keys)
-→ review-only: "Snapshot is 6 days old (fetched 2026-07-06)." → same trade check + review off the committed snapshot; no branch, no PR.
+→ review-only: "Snapshot is 6 days old (fetched 2026-07-06)." → same ledger check + review off the committed files; no branch, no PR.

@@ -26,17 +26,13 @@ Prism runs inside Claude Code. One-time setup:
 | Variable | Used by | Required? |
 |---|---|---|
 | `OPENAI_API_KEY` | `/podcast` (TTS) | **Required** for `/podcast` |
-| `NOTION_TOKEN` | `/log-trade` (write), `/scout` (read) | Optional — without it, `/log-trade` logs locally only and `/scout` skips the Notion read |
-| `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` | `/log-trade` | Optional — falls back to resolving the "Investment Log" DB by name |
-| `NOTION_INVESTMENT_LOG_DATABASE_ID` | `/scout`, `/log-trade` | Optional — same name fallback |
 | `EDGAR_CONTACT_EMAIL` | `/scout`, `/research` (SEC EDGAR requires a contact email in the request header) | Recommended — falls back to a generic placeholder |
 | `X_BEARER_TOKEN` | `/scout` (X signal source) | Optional — without it, scout runs on GDELT / HN / EDGAR |
-| `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` | `/sync-portfolio` (brokerage read via SnapTrade Personal API key) | Optional — without them, `/sync-portfolio` runs review-only off the last committed snapshot |
+| `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` | `/sync-portfolio` (brokerage read via SnapTrade Personal API key) — the only source of trade data | Optional — without them, `/sync-portfolio` runs review-only off the last committed snapshot and ledger, and the dashboard has no trades |
 
 **Settings files:**
 
 - **`.claude/scout-x-feeds.json`** — the curated X accounts `/scout` pulls from (`handles[]`, optional `topics` / `note` per account). Ships as an example template; edit it with accounts you actually follow. Only used when `X_BEARER_TOKEN` is set; harmless to leave as the template otherwise.
-- **Notion MCP** — `/log-trade` and `/scout` reach Notion through the MCP server wired in `.mcp.json` (`@notionhq/notion-mcp-server`, launched by `scripts/start-notion-mcp.sh`, which reads `NOTION_TOKEN` from `.env`). Create a Notion *internal integration*, copy its secret into `NOTION_TOKEN`, and share your Investment Log database with that integration. Step-by-step in `.env.example`.
 
 **System tools:** `ffmpeg` (podcast audio stitching), `gh` (PR creation), `python3`. `setup.sh` checks for these.
 
@@ -145,43 +141,16 @@ python scripts/generate_dashboard.py
 open dashboard/index.html
 ```
 
-Generates a local HTML dashboard from the tracking files. No server required — opens directly in the browser.
+Generates a local HTML dashboard from the tracking files — trades come from the broker ledger (`tracking/ledger.json`, merged by `/sync-portfolio`), so there's nothing to log by hand. No server required — opens directly in the browser.
 
 **Four views:**
 
 - **Timeline** — chronological interleaving of research runs, trades, and journal reflections, showing which research preceded which trade and what you were thinking along the way.
-- **Research → Trade Alignment** — every trade row linked to the research that drove it (from `trades.json`), with alignment classification (aligned / misaligned / unlinked) and lag in days between research and trade.
-- **P&L** — portfolio value vs. net invested over time, and per-ticker P&L drivers. A "Compare with what-if" dropdown overlays any active `/what-if` scenarios as dashed lines, each with a summary.
+- **Research → Trade Alignment** — every broker fill linked automatically to the newest research run covering its ticker dated on/before the fill (within 180 days), with alignment classification (aligned / misaligned / neutral / unlinked) against that run's Market verdict and lag in days between research and trade.
+- **P&L** — portfolio value vs. net invested over time across the ledger's full history, and per-ticker P&L drivers. Holdings older than the ledger get an opening lot priced at the ledger's first day, so P&L on them counts from there. A "Compare with what-if" dropdown overlays any active `/what-if` scenarios as dashed lines, each with a summary.
 - **Per-Ticker Drilldown** — every research run that covered the ticker with its Market verdict (read straight from the reports), trade history with shares and price, and unrealized P&L vs. current price.
 
 **Requirements:** `yfinance` (for current prices and P&L). Install via `pip install yfinance` or run `bash setup.sh`.
-
----
-
-## Investment Log
-
-```
-/log-trade <description>
-```
-
-Logs an investment action to the Notion Investment Log database, links it to the research that drove it, and updates the local tracking layer.
-
-**How it works:**
-
-1. Parses your natural-language description into trade fields — ticker, amount, action (`buy`/`add`/`trim`/`sell`), and optional shares, price, and comment.
-2. Finds research runs that covered the ticker and asks which informed the trade, then inserts the row into the Notion Investment Log database with the research linked as a hyperlink in the Comment.
-3. Records the trade in `trades.json`, with each linked run's verdict at the time. Regenerates the dashboard automatically when due — once per trading day, after the 1 pm PT close (`scripts/dashboard_due.py`).
-4. Lands on its own branch + Pull Request, same as every other command.
-
-**Requirements:** a Notion integration token in `NOTION_TOKEN` (the MCP server wired in `.mcp.json` reads it from `.env`), with your Investment Log database shared to that integration. Optionally pin the database via `NOTION_INVESTMENT_LOG_DATA_SOURCE_ID` / `NOTION_INVESTMENT_LOG_DATABASE_ID` (otherwise it's resolved by name). Without Notion configured, `/log-trade` still records every trade locally in `trades.json`. See the **Setup** section and `.env.example`.
-
-**Examples:**
-
-```
-/log-trade NVDA $2700 added on dip
-/log-trade BRKB $1900 — trimmed, valuation stretched
-/log-trade May 30 CRM $500
-```
 
 ---
 
@@ -191,7 +160,7 @@ Logs an investment action to the Notion Investment Log database, links it to the
 /journal <reflection>
 ```
 
-Captures a free-form reflection — a hesitation, an imagined scenario, a road not taken — into the dashboard timeline, so you can look back and reflect on your thinking, not just your trades. No research, no Notion.
+Captures a free-form reflection — a hesitation, an imagined scenario, a road not taken — into the dashboard timeline, so you can look back and reflect on your thinking, not just your trades. It's also the place for the *why* behind a trade — the trades themselves come from the broker. No research.
 
 **How it works:**
 
@@ -216,7 +185,7 @@ Captures a free-form reflection — a hesitation, an imagined scenario, a road n
 /what-if <scenario>
 ```
 
-Tracks hypothetical portfolios next to your real one on the dashboard's P&L chart — counterfactual comparison of concrete trade histories, not strategy backtesting (daily closes only; no dividends, intraday fills, or rebalancing rules). No research, no Notion.
+Tracks hypothetical portfolios next to your real one on the dashboard's P&L chart — counterfactual comparison of concrete trade histories, not strategy backtesting (daily closes only; no dividends, intraday fills, or rebalancing rules). `substitute` and `benchmark` scenarios replay your actual trades from the broker ledger. No research.
 
 **How it works:**
 
@@ -243,16 +212,16 @@ Tracks hypothetical portfolios next to your real one on the dashboard's P&L char
 /sync-portfolio [focus]
 ```
 
-Pulls your **real brokerage state** — accounts, balances, positions, recent activity — via [SnapTrade](https://snaptrade.com) (Personal API key, read-only for Fidelity), checks it against the trade log, and reviews the portfolio. The brokerage snapshot is the **source of truth for holdings**; `trades.json` is the research-linked trade log.
+Pulls your **real brokerage state** — accounts, balances, positions, options — and your **activity history** via [SnapTrade](https://snaptrade.com) (Personal API key, read-only for Fidelity), and reviews the portfolio. The broker is the source of truth for both what you hold (`brokerage-snapshot.json`) and what you traded (`ledger.json`); nothing is logged by hand.
 
 **How it works:**
 
 1. **Capability check** — if `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` are set (env or `.env`), it fetches live via `scripts/fetch_snaptrade.py` into `tracking/brokerage-snapshot.json`. If not (say, a cloud sandbox without the keys), it degrades to a **review-only** pass over the last committed snapshot, led by a staleness warning — no writes, no git.
-2. **Check trades** — brokerage trades missing from `trades.json` are suggested as `/log-trade` backfills — never auto-written, since `trades.json` mirrors Notion 1:1.
-3. **Review** — concentration, cash, per-position P&L, open options, held names with no research run in `reports/` (listed as ready-to-run `/research` questions), and held names whose latest research is over 6 months old. An optional focus hint (`/sync-portfolio concentration`) weights the review.
+2. **Ledger** — every fetched activity is merged into `tracking/ledger.json` by SnapTrade activity id (append-only; the first sync pulls the account's full history). The ledger is cross-checked against the snapshot: opening lots for pre-history holdings + ledger history must equal current shares, or the sync warns.
+3. **Review** — concentration, cash (actual cash derived from the account total, split into option collateral and free buying power — Fidelity's SPAXX line can lag), per-position P&L, open options, held names with no research run in `reports/` (listed as ready-to-run `/research` questions), and held names whose latest research is over 6 months old. An optional focus hint (`/sync-portfolio concentration`) weights the review.
 4. Lands on its own branch + Pull Request, same flow as every other command.
 
-**Output** → `tracking/brokerage-snapshot.json`
+**Output** → `tracking/brokerage-snapshot.json`, `tracking/ledger.json` (+ `dashboard/index.html` when a regen is due — the ledger is a dashboard input)
 
 **Requirements:** a free SnapTrade account with a **Personal API key** and your brokerage connected once via their Connection Portal (browser, one-time), then `SNAPTRADE_CLIENT_ID` / `SNAPTRADE_CONSUMER_KEY` in `.env`. Setup steps in `.env.example`. The consumerKey has full read access to your connected brokerage — treat it like a password.
 
@@ -266,7 +235,7 @@ Pulls your **real brokerage state** — accounts, balances, positions, recent ac
 
 ---
 
-The seven commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, log the trade, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
+The six commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, sync the trade you made, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
 
 ---
 
@@ -274,11 +243,13 @@ The seven commands are independent — none assumes another ran first. You can c
 
 Four JSON files in `tracking/`:
 
-- **`trades.json`** — log of every individual trade execution: date, ticker, action, amount, shares, price per share, and a `linked_research[]` array pointing to the research runs that motivated the trade (with each run's verdict at the time). Written by `/log-trade`; read by the dashboard for alignment analysis and P&L.
+- **`ledger.json`** — the brokerage's own activity history (fills, option trades, dividends, deposits, corporate actions), merged by `/sync-portfolio` and keyed by SnapTrade activity id. The source of truth for what traded; read by the dashboard for P&L, research alignment, and what-if replays.
 - **`journal.json`** — free-form reflections from `/journal`: text plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your thinking — hesitations, imagined scenarios, roads not taken — read by the dashboard for the timeline.
 - **`hypotheticals.json`** — what-if scenarios from `/what-if`: trade substitutions, standalone hypothetical portfolios, and benchmarks, read by the dashboard for the P&L chart overlays.
 - **`brokerage-snapshot.json`** — the real brokerage state (accounts, balances, positions, options, recent activity) fetched from SnapTrade by `/sync-portfolio`; the **source of truth for holdings** and for every `[PORTFOLIO]` badge.
 
-Research itself lives only in `reports/` — there's no separate thesis store, watchlist, or event tracker to keep in sync. Anything that needs a ticker's research history (the dashboard, `/log-trade`, `/journal`, `/sync-portfolio`) reads the reports directly.
+Research itself lives only in `reports/` — there's no separate thesis store, watchlist, or event tracker to keep in sync. Anything that needs a ticker's research history (the dashboard, `/journal`, `/sync-portfolio`) reads the reports directly through `scripts/research_index.py`.
+
+**Shared rules, in code** — ticker spelling (`scripts/symbols.py`: Yahoo form, e.g. `BRK-B`; the broker's own spelling is kept as `raw_symbol`), research coverage and verdicts (`scripts/research_index.py`), the trade ledger (`scripts/ledger.py`), and a read-only consistency report (`scripts/check_consistency.py`, run by each data-writing command on what it wrote). Commands call these instead of re-deriving the rules.
 
 See `tracking/README.md` for the file schemas.

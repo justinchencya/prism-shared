@@ -92,7 +92,7 @@ echo ""
 echo "Environment variables:"
 
 # Load .env so these checks see values configured there, not just exported shell
-# vars. Same pattern scripts/start-notion-mcp.sh uses to feed the Notion MCP server.
+# vars.
 if [[ -f "$REPO_DIR/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -110,27 +110,6 @@ else
 fi
 
 # Optional — the engine degrades gracefully without these; missing → info, not a failure.
-if [[ -n "${NOTION_TOKEN:-}" ]]; then
-  ok "NOTION_TOKEN set"
-else
-  info "NOTION_TOKEN not set — /log-trade records trades locally only; /scout skips the Notion read"
-  echo "       optional. add to .env: NOTION_TOKEN=ntn_...   (see .env.example for steps)"
-fi
-
-if [[ -n "${NOTION_INVESTMENT_LOG_DATA_SOURCE_ID:-}" ]]; then
-  ok "NOTION_INVESTMENT_LOG_DATA_SOURCE_ID set"
-else
-  info "NOTION_INVESTMENT_LOG_DATA_SOURCE_ID not set — /log-trade resolves the DB by name instead"
-  echo "       optional. add to .env: NOTION_INVESTMENT_LOG_DATA_SOURCE_ID=..."
-fi
-
-if [[ -n "${NOTION_INVESTMENT_LOG_DATABASE_ID:-}" ]]; then
-  ok "NOTION_INVESTMENT_LOG_DATABASE_ID set"
-else
-  info "NOTION_INVESTMENT_LOG_DATABASE_ID not set — /scout resolves the DB by name instead"
-  echo "       optional. add to .env: NOTION_INVESTMENT_LOG_DATABASE_ID=..."
-fi
-
 if [[ -n "${EDGAR_CONTACT_EMAIL:-}" ]]; then
   ok "EDGAR_CONTACT_EMAIL set"
 else

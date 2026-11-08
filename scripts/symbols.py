@@ -13,7 +13,7 @@ tracked (BTC) — quote_symbol() maps it to the Yahoo pair (BTC-USD) only when
 fetching prices.
 
 Rules:
-  - Normalize at write boundaries (fetchers, /log-trade, /journal, /what-if,
+  - Normalize at write boundaries (fetchers, /journal, /what-if,
     research dispatch); readers canonicalize both sides before comparing, so
     legacy spellings already on disk keep working — nothing is backfilled.
   - canonical() fixes *spelling* only — it never merges two real securities.
