@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Research coverage + Market verdicts, read straight from reports/ — the one
-implementation every consumer shares (dashboard, /sync-portfolio, /log-trade,
-/journal). There is no tracking file for research; this reads the reports.
+implementation every consumer shares (dashboard, /sync-portfolio, /journal). There is no tracking file for research; this reads the reports.
 
 Usage:
   research_index.py <TICKER> [<TICKER> ...] [--json] [--all]

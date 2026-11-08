@@ -21,7 +21,8 @@ Checks:
   not-a-quote  a ticker that isn't a quote symbol at all (company names,
                pair notes like SPCX-SPY) — tracking files and report
                tickers/<SYMBOL>.md names
-  link         trades/journal linked_research report_path that doesn't exist
+  link         journal linked_research report_path that doesn't exist
+  duplicate    a ledger activity id recorded twice
   raw-symbol   brokerage snapshot rows missing raw_symbol (pre-normalization
                snapshot)
 """
@@ -66,15 +67,18 @@ def _load(path: Path):
         return None
 
 
-def check_trades(path: Path) -> list:
+def check_ledger(path: Path) -> list:
     out, data = [], _load(path) or {}
-    for t in data.get("trades", []):
-        where = f"{_rel(path)}:{t.get('id')}"
-        out += _sym_issues(where, t.get("ticker"))
-        for link in t.get("linked_research") or []:
-            rp = link.get("report_path")
-            if rp and not (ROOT / rp).exists():
-                out.append({"check": "link", "where": where, "detail": f"report_path {rp} does not exist"})
+    seen = set()
+    for a in data.get("activities", []):
+        where = f"{_rel(path)}:{a.get('id')}"
+        if a.get("id") in seen:
+            out.append({"check": "duplicate", "where": where, "detail": "activity id appears twice"})
+        seen.add(a.get("id"))
+        sym = a.get("symbol")
+        if sym and sym != canonical(sym):
+            out.append({"check": "symbol", "where": where,
+                        "detail": f"{sym!r} is not canonical — use {canonical(sym)!r}"})
     return out
 
 
@@ -134,7 +138,7 @@ def check_run(run_dir: Path) -> list:
 
 
 CHECKERS = {
-    "trades.json": check_trades,
+    "ledger.json": check_ledger,
     "journal.json": check_journal,
     "hypotheticals.json": check_hypotheticals,
     "brokerage-snapshot.json": check_snapshot,

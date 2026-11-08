@@ -6,14 +6,13 @@ This is for the user's own thinking. Not advice for anyone else. Skip disclaimer
 
 ## Architecture
 
-Four agents, three entry points. Plus four utility commands with no agent — `/log-trade` hits Notion directly, `/journal` and `/what-if` write only local tracking, `/sync-portfolio` hits SnapTrade directly. The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
+Four agents, three entry points. Plus three utility commands with no agent — `/journal` and `/what-if` write only local tracking, `/sync-portfolio` hits SnapTrade directly (and is the only source of trade data — there is no manual trade log). The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
 
 | Command | Agent(s) | Prompt file(s) |
 |---|---|---|
 | `/scout <focus>` | scout | `.claude/agents/scout.md` |
 | `/research <question>` | research-director (rubric) + researcher(s), dispatched by the `/research` command | `.claude/agents/research-director.md`, `researcher.md` |
 | `/podcast <run-dir>` | podcast-producer | `.claude/agents/podcast-producer.md` |
-| `/log-trade <description>` | — (Notion MCP direct) | `.claude/commands/log-trade.md` |
 | `/journal <reflection>` | — (local tracking direct) | `.claude/commands/journal.md` |
 | `/what-if <scenario>` | — (local tracking direct) | `.claude/commands/what-if.md` |
 | `/sync-portfolio [focus]` | — (SnapTrade direct) | `.claude/commands/sync-portfolio.md` |
@@ -48,7 +47,7 @@ The agents' prompts are the rubrics; if output quality drifts, tighten the relev
 
 ## Journal flow
 
-A lightweight capture command for the user's own thinking — reflections, hesitations, imagined scenarios, roads-not-taken — surfaced in the dashboard timeline for later review. No agent, no research, no Notion.
+A lightweight capture command for the user's own thinking — reflections, hesitations, imagined scenarios, roads-not-taken — surfaced in the dashboard timeline for later review. It is also where the user's reasoning about trades lives (the trades themselves come from the broker ledger). No agent, no research.
 
 1. **Sync + refine** — `/journal` syncs `main`, takes everything after `/journal` as a raw reflection (asks for it if empty), and helps the user refine it into clearer prose — preserving voice, stance, and doubt — before storing the approved text.
 2. **Link (always asked)** — suggests related research runs (keyword/ticker matches + recent runs) and tickers (tagged `[PORTFOLIO]`/`[NEW]`), and asks which to link.
@@ -66,19 +65,19 @@ Counterfactual comparison of concrete trade histories — **not** strategy backt
 
 ## Sync-portfolio flow
 
-Pulls the **real brokerage state** via SnapTrade (Personal API key — HMAC-signed requests, read-only for Fidelity, no userId/userSecret; the key resolves the user) and reviews it. Two modes, chosen automatically by capability:
+Pulls the **real brokerage state** and **activity history** via SnapTrade (Personal API key — HMAC-signed requests, read-only for Fidelity, no userId/userSecret; the key resolves the user) and reviews it. The broker is the record of what traded: nothing is logged by hand. Two modes, chosen automatically by capability:
 
-1. **Detect** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` present (env or `.env`) → sync mode; absent (e.g. a cloud sandbox without the keys) → **review-only mode**: no fetch, no writes, no git — the same review runs against the committed `tracking/brokerage-snapshot.json`, led by a staleness warning from its `fetched_at`.
-2. **Fetch** (sync mode) — `scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json` writes accounts, balances, positions, open option contracts, and lookback-window activities (stdlib-only; account numbers masked to last 4; exit 2 = creds missing → fall back to review-only).
-3. **Check trades** (read-only) — unlogged brokerage buys/sells → **suggest `/log-trade`, never write `trades.json`** (it mirrors Notion 1:1); share-count drift vs the trade log is reported, not fixed.
+1. **Detect** — `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` present (env or `.env`) → sync mode; absent (e.g. a cloud sandbox without the keys) → **review-only mode**: no fetch, no writes, no git — the same review runs against the committed `tracking/brokerage-snapshot.json` and `tracking/ledger.json`, led by a staleness warning from its `fetched_at`.
+2. **Fetch** (sync mode) — `scripts/fetch_snaptrade.py tracking/brokerage-snapshot.json --ledger tracking/ledger.json` writes accounts, balances (derived cash), positions, open option contracts, and lookback-window activities, and merges every activity into the append-only ledger by SnapTrade activity id — an empty ledger gets the account's full history (stdlib-only; backs off on rate limits; account numbers masked to last 4; exit 2 = creds missing → fall back to review-only).
+3. **Ledger check** (read-only) — `scripts/ledger.py` cross-checks the ledger (plus synthesized opening lots for holdings that predate it) against the snapshot's shares; mismatches are reported, never patched.
 4. **Review** — terse, investor-stance read of the snapshot: concentration, cash, per-position P&L, open options (share encumbrance from short calls, near/past expiries, assignment risk), held names with no research run in `reports/` (→ ready-to-run `/research` questions), and held names whose latest research is >6 months old.
-5. **Commit** — `/sync-portfolio` commits the snapshot on its own `sync-portfolio/<timestamp>` branch and opens a PR. The snapshot isn't a dashboard input, so no regen.
+5. **Commit** — `/sync-portfolio` commits the snapshot + ledger on its own `sync-portfolio/<timestamp>` branch and opens a PR. The ledger is a dashboard input, so the dashboard regenerates when due.
 
 ## Git convention
 
 Every run lands as its **own branch + Pull Request** — never a direct commit to `main`. The **agents never touch git** — the commands own it. Remote is named `origin`; base branch is `main`.
 
-**Branch-first, uniform across all seven.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
+**Branch-first, uniform across all six.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
 
 Standardized branch names — `<type>/<identifier>`, all date-prefixed, all computable before the work:
 
@@ -87,7 +86,6 @@ Standardized branch names — `<type>/<identifier>`, all date-prefixed, all comp
 | `/scout` | `scout/<YYYY-MM-DD-HHMMSS>` | `date +%Y-%m-%d-%H%M%S` (per-second; multiple/day never collide) | `scouts/<id>/` |
 | `/research` | `research/<YYYY-MM-DD>-<slug>` | today + kebab slug the command derives from the question | `reports/<id>/` |
 | `/podcast` | `podcast/<YYYY-MM-DD>-<slug>` | basename of the target report dir (already `YYYY-MM-DD-<slug>`) | writes into `reports/<id>/podcast/` |
-| `/log-trade` | `log-trade/<YYYY-MM-DD>-<ticker-slug>` | today + parsed ticker(s) (hyphen-joined if several) | — (tracking files) |
 | `/journal` | `journal/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `journal.json` | — (tracking file) |
 | `/what-if` | `whatif/<YYYY-MM-DD>-<NNN>` | today + next per-day sequence from `hypotheticals.json` (bumped past existing branches for management runs) | — (tracking file) |
 | `/sync-portfolio` | `sync-portfolio/<YYYY-MM-DD-HHMMSS>` | `date +%Y-%m-%d-%H%M%S` (per-second, like `/scout`) | — (tracking files) |
@@ -100,7 +98,7 @@ Standardized branch names — `<type>/<identifier>`, all date-prefixed, all comp
 
 Both shipping options' `preview` carries the run's results plus the dashboard decision (below). Nothing is pushed or merged without the user picking a shipping option; free-text "Other" answers (e.g. "ship it but skip the dashboard") are honored as written.
 
-**The dashboard is committed, regeneration is rule-based (no prompt).** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/log-trade`, `/journal`, and `/what-if` (tracking files) and `/research` (a new `final-report.md`) — decides regeneration with `python3 scripts/dashboard_due.py` instead of asking. It prints `regenerate: …` (exit 0) only when **now is a NYSE trading day after that day's close (13:00 PT; 10:00 PT on early-close days) and no commit on `main` has touched `dashboard/index.html` since that close** — i.e. once per trading day, on closing prices; otherwise `skip: …` (exit 1). The generator fetches live prices via yfinance (slow), so this keeps it to one regen per close. The command runs the check before the ship gate and states its one-line decision in the gate's preview; if the user ships, it runs `python3 scripts/generate_dashboard.py` on `regenerate` (or when the user's invocation/answer explicitly asks for a regen) and stages `dashboard/index.html` **with the run**; on `skip` the committed dashboard is left as-is. A regen error is reported but never blocks the commit. `/scout`, `/podcast`, and `/sync-portfolio` touch no dashboard input (the brokerage snapshot isn't one), so they neither check nor regenerate.
+**The dashboard is committed, regeneration is rule-based (no prompt).** `dashboard/index.html` is a tracked file. Any command that mutates a dashboard **input** — `/sync-portfolio`, `/journal`, and `/what-if` (tracking files) and `/research` (a new `final-report.md`) — decides regeneration with `python3 scripts/dashboard_due.py` instead of asking. It prints `regenerate: …` (exit 0) only when **now is a NYSE trading day after that day's close (13:00 PT; 10:00 PT on early-close days) and no commit on `main` has touched `dashboard/index.html` since that close** — i.e. once per trading day, on closing prices; otherwise `skip: …` (exit 1). The generator fetches live prices via yfinance (slow), so this keeps it to one regen per close. The command runs the check before the ship gate and states its one-line decision in the gate's preview; if the user ships, it runs `python3 scripts/generate_dashboard.py` on `regenerate` (or when the user's invocation/answer explicitly asks for a regen) and stages `dashboard/index.html` **with the run**; on `skip` the committed dashboard is left as-is. A regen error is reported but never blocks the commit. `/scout` and `/podcast` touch no dashboard input, so they neither check nor regenerate.
 
 Canonical procedure (each command substitutes branch / paths / title):
 
@@ -111,7 +109,7 @@ git status --porcelain                               # clean-tree guard: unrelat
 git switch main && git pull --ff-only origin main    # the ONE sync
 git switch -c <type>/<identifier>                     # branch off fresh main, BEFORE the work
 # non-English input + set_session_title tool available → rename the session to "<type>: <English identifier>" (see Voice)
-# ... the command does its work ON THE BRANCH: agent run / file writes / Notion ...
+# ... the command does its work ON THE BRANCH: agent run / file writes ...
 # ── at commit time, after showing files + the ship gate's yes ──
 python3 scripts/dashboard_due.py && python3 scripts/generate_dashboard.py   # only if the run mutated a dashboard input
 git add <run-paths>                                   # + dashboard/index.html if regenerated
@@ -125,7 +123,7 @@ git switch main                                       # always finish on main
 
 - **Engine-repo guard** — `.prism-engine` at the repo root marks the public engine repo (prism-shared); every command except `/sync` stops there and points the user to their private repo. Single-repo setups delete the marker.
 - **Clean-tree guard** — before pulling/branching, if `git status --porcelain` shows changes unrelated to this run, stop and report; never stash or sweep them in.
-- **Decline path** — if the user picks *Don't commit* at the ship gate, return to `main` and drop the unused local branch: `git switch main && git branch -D <type>/<identifier>` (the work returns to the working tree; nothing was pushed). For `/log-trade` and `/journal`, any Notion write and tracking-file edits already made remain — only the branch is discarded.
+- **Decline path** — if the user picks *Don't commit* at the ship gate, return to `main` and drop the unused local branch: `git switch main && git branch -D <type>/<identifier>` (the work returns to the working tree; nothing was pushed). Tracking-file edits already made remain in the working tree — only the branch is discarded.
 - **Failure rule** — any git/`gh` failure: report and stop, no destructive retry.
 - PRs are merged only when the user picks *Ship it* at the ship gate; otherwise left open to merge on GitHub. `/podcast` additionally expects its target report to already be merged into `main` (it verifies the report is present right after the sync, before cutting the branch).
 
@@ -140,7 +138,7 @@ Prism lives in two sibling repos:
 
 - Engine changes belong in **prism-shared first**, then sync to prism. When a change lands in prism first (it happens — that's where daily work runs), port it back to prism-shared promptly.
 - Engine files should be **byte-identical** across the two repos. The only expected diffs are the `.prism-engine` marker (prism-shared only) and personal data: `tracking/*.json`, `dashboard/index.html`, `.claude/scout-x-feeds.json`, `.claude/settings.local.json`, `.claude/podcast-cast.json`, `.env`, `reports/`, `scouts/`, `memos/`.
-- **Nothing personal ever enters prism-shared** — no real handles, Notion IDs, keys, personal paths, or tracking data. prism → prism-shared is a port with sanitization, not a copy.
+- **Nothing personal ever enters prism-shared** — no real handles, account numbers, keys, personal paths, or tracking data. prism → prism-shared is a port with sanitization, not a copy.
 - Sync commits reference the source repo's PR (`sync: <what> from prism (#N)`), so direction and provenance are recoverable from history.
 - `/sync` (`.claude/commands/sync.md`) automates the whole flow: diffs the engine set, infers direction from git history, sanitizes, and lands a PR in the receiving repo per the Git convention.
 
@@ -177,23 +175,23 @@ reports/
       episode.mp3
       episode.json
 tracking/
-  trades.json                  # individual trade log written by /log-trade
+  ledger.json                  # brokerage activity history (every fill, option trade, dividend, corporate action), merged by /sync-portfolio
   journal.json                 # free-form reflections written by /journal
   hypotheticals.json           # what-if scenarios written by /what-if
   brokerage-snapshot.json      # real brokerage state fetched from SnapTrade by /sync-portfolio
 dashboard/
-  index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (log-trade / journal / what-if / research) when scripts/dashboard_due.py says it's due (once per trading day, after the 13:00 PT close)
+  index.html                   # generated by scripts/generate_dashboard.py; tracked — regenerated + committed by the command that mutates a dashboard input (sync-portfolio / journal / what-if / research) when scripts/dashboard_due.py says it's due (once per trading day, after the 13:00 PT close)
 ```
 
 Cast voices live in `.claude/podcast-cast.json` (created on first `/podcast` run, reused after). Helper at `scripts/tts_synthesize.py` does the OpenAI HTTP calls. The scout's curated X follow list lives in `.claude/scout-x-feeds.json` (hand-edited; `handles[]` with optional `topics`/`note`).
 
 ## Tracking
 
-Four persistent JSON files live in `tracking/` and are committed with the trade/journal/what-if/sync-portfolio PR that changes them.
+Four persistent JSON files live in `tracking/` and are committed with the journal / what-if / sync-portfolio PR that changes them.
 
 ```
 tracking/
-  trades.json        # individual trade log: every /log-trade execution with linked research
+  ledger.json        # brokerage activity history from SnapTrade via /sync-portfolio — source of truth for what traded
   journal.json       # free-form reflections: every /journal entry with linked runs/tickers
   hypotheticals.json # what-if scenarios: substitutions / standalone portfolios / benchmarks
   brokerage-snapshot.json # real brokerage state (accounts/positions/options/activity) from SnapTrade via /sync-portfolio — source of truth for holdings
@@ -201,20 +199,22 @@ tracking/
 
 **Symbols & reconciliation** — one rule each, in code, shared by every consumer; commands call the scripts instead of re-deriving the rule in prose:
 
-- **Ticker identity** — `scripts/symbols.py`. Canonical = the Yahoo Finance spelling (`BRK-B`, `000660.KS`; crypto stays `BTC`, quoted as `BTC-USD`). Normalize at write boundaries (SnapTrade fetch keeps the broker's spelling as `raw_symbol`; `/log-trade`, `/journal`, `/what-if`, research dispatch run `python3 scripts/symbols.py --check <SYM>`); readers canonicalize both sides, so legacy spellings on disk keep working — **no backfills, no renames**. `canonical()` fixes spelling only; `economic_group()` (GOOGL → GOOG) is the deliberate share-class merge for research coverage and the dashboard, never for trade matching.
-- **Research coverage + verdicts** — `scripts/research_index.py <TICKER>...` (used by the dashboard, `/sync-portfolio`, `/log-trade`, `/journal`).
-- **Trade log vs brokerage** — `scripts/reconcile_trades.py` (canonical symbol, direction, trading-day date window, price-first, quantity-aware; read-only).
-- **Consistency** — `scripts/check_consistency.py` reports (never fixes) non-canonical symbols, non-symbol ticker files, broken `report_path` links. Full scan = informational (legacy is tolerated); `--paths` = only what this run introduced vs git HEAD — every data-writing command runs it before its ship gate.
+- **Ticker identity** — `scripts/symbols.py`. Canonical = the Yahoo Finance spelling (`BRK-B`, `000660.KS`; crypto stays `BTC`, quoted as `BTC-USD`). Normalize at write boundaries (SnapTrade fetch keeps the broker's spelling as `raw_symbol`; `/journal`, `/what-if`, research dispatch run `python3 scripts/symbols.py --check <SYM>`); readers canonicalize both sides, so legacy spellings on disk keep working — **no backfills, no renames**. `canonical()` fixes spelling only; `economic_group()` (GOOGL → GOOG) is the deliberate share-class merge for research coverage and the dashboard, never for trade matching.
+- **Research coverage + verdicts** — `scripts/research_index.py <TICKER>...` (used by the dashboard, `/sync-portfolio`, `/journal`).
+- **Trades** — `scripts/ledger.py`: stock trades from the ledger (fills + share transfers; options, cash sweep and CUSIP-keyed legs excluded), opening lots for pre-ledger holdings, and the shares cross-check against the snapshot.
+- **Consistency** — `scripts/check_consistency.py` reports (never fixes) non-canonical symbols, non-symbol ticker files, broken `report_path` links, duplicate ledger ids. Full scan = informational (legacy is tolerated); `--paths` = only what this run introduced vs git HEAD — every data-writing command runs it before its ship gate.
 
-**Research lives in `reports/`, not in tracking.** There is no per-ticker thesis store, watchlist, or event tracker. Anything that needs a ticker's research history (the dashboard, `/log-trade` and `/journal` run suggestions, `/sync-portfolio`'s held-without-research and stale-research checks) reads it from the reports themselves: a run covered a ticker if `tickers/<TICKER>.md` exists or its `final-report.md` mentions `$<TICKER>`, and its Market verdict comes from the verdict table (or the `### $TICKER — <verdict>` heading, or the ticker file's `**Market verdict:**` line). `brokerage-snapshot.json` is the **source of truth for what's held** (positions, shares, cost, cash, P&L); `[PORTFOLIO]` badges everywhere come from the `symbol` values across its `accounts[].positions[]`.
+**Research lives in `reports/`, not in tracking.** There is no per-ticker thesis store, watchlist, or event tracker. Anything that needs a ticker's research history (the dashboard's automatic trade links, `/journal` run suggestions, `/sync-portfolio`'s held-without-research and stale-research checks) reads it from the reports themselves: a run covered a ticker if `tickers/<TICKER>.md` exists or its `final-report.md` mentions `$<TICKER>`, and its Market verdict comes from the verdict table (or the `### $TICKER — <verdict>` heading, or the ticker file's `**Market verdict:**` line). `brokerage-snapshot.json` is the **source of truth for what's held** (positions, shares, cost, cash, P&L); `[PORTFOLIO]` badges everywhere come from the `symbol` values across its `accounts[].positions[]`.
 
 (`tracking/price-cache.json` may also exist — a gitignored daily-close cache written by `scripts/generate_dashboard.py`, refetched whole per ticker per day. Never committed.)
 
-**What feeds in**: `/log-trade` writes each trade execution to `trades.json` (date, ticker, action, amount, shares, price, and `linked_research[]` linking to the specific runs that motivated the trade, each with the run's `market_verdict` for that ticker at link time) and mirrors it as a row in the **Investment Log** Notion database (columns: Ticker, date, Action, Amount, Shares, Price, Comment — Notion's `Amount` is **signed**: positive for `buy`/`add`, negative for `sell`/`trim`, since the log tracks net money invested; `Action` also carries the direction). `trades.json` mirrors the Notion log 1:1 **except** that its `amount_usd` is the unsigned positive magnitude (direction lives in the `action` field, which `scripts/generate_dashboard.py` relies on for the sign) — only Notion's `Amount` column carries the sign. `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) — it does not touch Notion. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. `/sync-portfolio` overwrites `brokerage-snapshot.json` with the fetched brokerage state and never writes `trades.json` (owned by `/log-trade`, mirrors Notion 1:1). Research, podcast, and scout write no tracking files.
+**What feeds in**: `/sync-portfolio` overwrites `brokerage-snapshot.json` with the fetched brokerage state and merges every fetched activity into `ledger.json` (append-only, keyed by SnapTrade activity id — the broker's own record; nothing is logged by hand). `/journal` writes each reflection to `journal.json` (date, text, `linked_research[]`, `linked_tickers[]`) — the place for the *why* behind trades. `/what-if` writes scenarios to `hypotheticals.json` (create + archive/reactivate/rename; schema in `tracking/README.md`) — local only. Research, podcast, and scout write no tracking files.
 
-**What consumes them**: scout and research-director read `brokerage-snapshot.json` for the `[PORTFOLIO]` set; `/journal` tags the same way. `scripts/generate_dashboard.py` reads `trades.json`, `journal.json`, and `hypotheticals.json` plus `reports/` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L and research history, and what-if scenario overlays on the P&L value chart) — a trade link's stored `market_verdict` wins, else the verdict is read from the linked run's report. `/sync-portfolio` reads `brokerage-snapshot.json` (its review-only fallback when SnapTrade credentials are absent) plus `trades.json` and `reports/`.
+**What consumes them**: scout and research-director read `brokerage-snapshot.json` for the `[PORTFOLIO]` set, and scout reads recent `ledger.json` fills for portfolio-activity context; `/journal` tags the same way. `scripts/generate_dashboard.py` reads `ledger.json` (via `scripts/ledger.py`, plus the snapshot for opening lots), `journal.json`, and `hypotheticals.json` plus `reports/` to generate `dashboard/index.html` (timeline with research/trade/journal nodes, research-to-trade alignment, per-ticker drilldown with P&L and research history, and what-if scenario overlays on the P&L value chart). Each fill is linked automatically to the newest research run covering its ticker dated on/before the fill (≤180 days), with that run's Market verdict. `/sync-portfolio` reads `brokerage-snapshot.json` and `ledger.json` (its review-only fallback when SnapTrade credentials are absent) plus `reports/`.
 
-**journal.json structure**: `{ last_updated, entries: [{ id, date, text, linked_research: [{ run, date, report_path, linked_at }], linked_tickers: [<symbol>] }] }`. Append-only log — entries are not snapshots and are never auto-pruned. Entry `id` is `journal-<YYYYMMDD>-<seq>` (per-day sequence, mirrors the `trades.json` id scheme).
+(`/log-trade`, its hand-kept `trades.json`, and the Notion Investment Log mirror were retired on 2026-11-08 — the broker ledger replaced them. The old file lives in git history.)
+
+**journal.json structure**: `{ last_updated, entries: [{ id, date, text, linked_research: [{ run, date, report_path, linked_at }], linked_tickers: [<symbol>] }] }`. Append-only log — entries are not snapshots and are never auto-pruned. Entry `id` is `journal-<YYYYMMDD>-<seq>` (per-day sequence).
 
 ## Investor stance
 
@@ -244,7 +244,7 @@ The user is primarily a long-term investor (multi-year core holdings) who also k
   - Company facts: `https://data.sec.gov/api/xbrl/companyfacts/CIK{10-digit-padded}.json`
   - **13F institutional breadth** — `scripts/fetch_13f_breadth.py <TICKER> <out.json>` pages full-text search over 13F-HR filings and writes per-quarter counts of distinct institutions holding the name (deduped by filer CIK) plus new/exited holders vs the prior quarter. 13F info tables key on CUSIP, not ticker — the script keeps a lazily-grown, gitignored cache at `.claude/cusip-map.json`; for an uncached ticker the researcher looks the CUSIP up once and passes `--cusip`. A **confirmation lens** for ticker deep dives (researcher Step 3d): what matters is direction across 2–3+ consecutive quarters of holder count and new-position velocity — never a discovery signal (filings lag up to 45 days) and never a verdict driver on its own. **On by default only at effort=high** (it takes minutes per name); other efforts skip it unless the user explicitly asks for the 13F/institutional lens — the director passes `include_13f: yes/no` in each ticker dispatch.
 - **Yahoo Finance via yfinance** (`pip install yfinance`) — used by `scripts/fetch_ticker_stats.py` for per-ticker financial stats (price, PE ratios, margins, quarterly financials, price history) plus a `technicals` block: 50/200-day MAs, RSI(14), trailing returns, relative strength vs SPY (the free capital-flow proxy), a volume trend, and a `structure` read from `scripts/technical_structure.py` — trend (MA stack, major swings, ADX), MACD, bearish/bullish divergences, a turnover-decay chip distribution (where holders' cost basis clusters), 12-month volume profile, anchored VWAPs, clustered support/resistance and a **break level** with a confirmed-break rule — all computed in pandas/numpy from daily OHLCV (no ta-lib). It also renders an annotated K-line chart (`chart_<TICKER>.png`, matplotlib) that the researcher opens to cross-check the computed labels visually and embeds in the ticker report. The technical setup feeds every **Market verdict** alongside valuation (valuation says whether the price is worth paying; the setup says whether now is the time), and every ticker gets **key levels** — add zone, reclaim, break, overhead — in its report, the final report, and the verdict table. Levels are dated report output, recomputed each run — never tracked as events. Price data can't show who is selling; the chip model approximates holder cost from volume and float. `python3 scripts/technical_structure.py <TICKER> --chart <png>` runs the same read standalone. Free, no auth. Researchers call this script at the start of Phase 3 in ticker sub-mode; do not call Yahoo Finance ad hoc when this script is available.
-- **SnapTrade** (`https://api.snaptrade.com/api/v1`, Personal API key — free tier) — used only by `scripts/fetch_snaptrade.py` for `/sync-portfolio`: accounts, balances, positions, open option contracts (`/accounts/{id}/options` — a separate endpoint from `/positions`, which returns equities only), recent activities from the user's connected brokerage (Fidelity — read-only, no trade placement). Auth is `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` in `.env`: every request carries `clientId` + `timestamp` query params and a `Signature` header (base64 HMAC-SHA256 of `{content, path, query}` signed with the consumerKey); no userId/userSecret — a Personal key resolves the user directly, and Register User is never called. The consumerKey has full read access to the connected brokerage: never print or commit it. Unset credentials degrade `/sync-portfolio` to review-only over the committed snapshot. Fidelity's SPAXX/cash line can lag real cash, so the snapshot's `cash` is derived (total − non-cash positions − options; collateral-reserved and free portions split out) and cross-checked against `buying_power` + short-put collateral — see `tracking/README.md`.
+- **SnapTrade** (`https://api.snaptrade.com/api/v1`, Personal API key — free tier) — used only by `scripts/fetch_snaptrade.py` for `/sync-portfolio`: accounts, balances, positions, open option contracts (`/accounts/{id}/options` — a separate endpoint from `/positions`, which returns equities only), recent activities from the user's connected brokerage (Fidelity — read-only, no trade placement), merged into the append-only trade ledger `tracking/ledger.json` (full history back to the account's first SnapTrade transaction; holdings older than that get synthesized opening lots — see `tracking/README.md`). Auth is `SNAPTRADE_CLIENT_ID` + `SNAPTRADE_CONSUMER_KEY` in `.env`: every request carries `clientId` + `timestamp` query params and a `Signature` header (base64 HMAC-SHA256 of `{content, path, query}` signed with the consumerKey); no userId/userSecret — a Personal key resolves the user directly, and Register User is never called. The consumerKey has full read access to the connected brokerage: never print or commit it. Unset credentials degrade `/sync-portfolio` to review-only over the committed snapshot. Fidelity's SPAXX/cash line can lag real cash, so the snapshot's `cash` is derived (total − non-cash positions − options; collateral-reserved and free portions split out) and cross-checked against `buying_power` + short-put collateral — see `tracking/README.md`.
 - The research pipeline uses no paid data APIs (web search, WebFetch, EDGAR, yfinance are all free). If a free path doesn't exist for a question, say so in the report. The only keyed sources anywhere in Prism are scout's optional X feed (`X_BEARER_TOKEN`) and `/sync-portfolio`'s SnapTrade credentials — both degrade gracefully when unset.
 
 ## Dates

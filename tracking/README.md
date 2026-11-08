@@ -1,78 +1,65 @@
 # Tracking
 
-Four persistent JSON files, each owned by one command:
+Four persistent JSON files (`/sync-portfolio` owns two of them):
 
-- **trades.json** — log of every individual trade execution written by `/log-trade` (see schema below)
+- **ledger.json** — the brokerage's own activity history (every fill, option trade, dividend, deposit, corporate action), merged by `/sync-portfolio` via `scripts/fetch_snaptrade.py --ledger` (see schema below). The **source of truth for what traded** — nothing is logged by hand. Ships as an empty template in prism-shared.
 - **journal.json** — free-form reflections written by `/journal`: each entry carries `text` plus optional `linked_research[]` and `linked_tickers[]`. A capture log for your own thinking (hesitations, imagined scenarios, roads not taken), surfaced in the dashboard timeline.
 - **hypotheticals.json** — what-if scenarios written by `/what-if`: counterfactual trade substitutions, standalone hypothetical portfolios, and single-ticker benchmarks, overlaid on the dashboard P&L chart (see schema below)
 - **brokerage-snapshot.json** — the real brokerage state (accounts, balances, positions, recent activity) pulled from SnapTrade by `/sync-portfolio` via `scripts/fetch_snaptrade.py` (see schema below). The **source of truth for holdings**; consumers judge staleness from `fetched_at`. Ships as an empty template in prism-shared — real data lives only in the private repo.
 
 (A fifth file, `price-cache.json`, may appear here — a gitignored daily-close cache written by `scripts/generate_dashboard.py`. Pure regenerable optimization, never committed.)
 
-Research runs write nothing here. A ticker's research history and verdicts live in `reports/` and are read from there (see **Tracking** in `CLAUDE.md`). Scout and research-director read brokerage-snapshot.json for `[PORTFOLIO]` tagging; trades.json, journal.json, and hypotheticals.json are read by the dashboard; trades.json is never written outside `/log-trade`.
+Research runs write nothing here. A ticker's research history and verdicts live in `reports/` and are read from there (see **Tracking** in `CLAUDE.md`). Scout and research-director read brokerage-snapshot.json for `[PORTFOLIO]` tagging; ledger.json, journal.json, and hypotheticals.json are read by the dashboard (which links each fill to its research automatically); ledger.json is never written outside `/sync-portfolio`.
+
+(Until 2026-11-08 trades were logged by hand with `/log-trade` into `trades.json`, mirrored to a Notion database. Both were retired in favor of the ledger; the old file lives on in git history.)
 
 ---
 
-## Schema: trades.json
+## Schema: ledger.json
 
-Written by `/log-trade`. Each entry is one trade execution.
+Written only by `scripts/fetch_snaptrade.py --ledger` (invoked by `/sync-portfolio`). Append-only: every fetched activity is merged by SnapTrade activity `id`, so re-syncing is idempotent. A ledger with no activities for an account gets that account's **full history** (from SnapTrade's `first_transaction_date`) on the next sync; later syncs merge the `lookback_days` window. Rules live in `scripts/ledger.py`.
 
 ```json
 {
-  "last_updated": "YYYY-MM-DD",
-  "trades": [
+  "updated_at": "2026-11-08T18:30:47Z",
+  "history_start": "2024-07-30",
+  "activities": [
     {
-      "id": "trade-NVDA-20260526-001",
-      "date": "2026-05-26",
-      "ticker": "NVDA",
-      "action": "buy",
-      "amount_usd": 427.0,
-      "shares": 2,
-      "price_per_share": 213.5,
-      "comment": "optional note",
-      "notion_page_id": "...",
-      "notion_url": "https://app.notion.com/p/...",
-      "linked_research": [
-        {
-          "run": "2026-05-29-brkb-2025-drawdown",
-          "date": "2026-05-29",
-          "report_path": "reports/2026-05-29-brkb-2025-drawdown/tickers/NVDA.md",
-          "market_verdict": "Buy",
-          "linked_at": "2026-05-29"
-        }
-      ]
+      "id": "<snaptrade activity uuid>",
+      "date": "2026-11-06",
+      "type": "SELL",
+      "symbol": "AMD",
+      "raw_symbol": "AMD",
+      "units": -10.0,
+      "price": 436.9,
+      "amount": 4368.91,
+      "fee": 0.09,
+      "option": "",
+      "currency": "USD",
+      "description": "YOU SOLD ADVANCED MICRO DEVICES INC (AMD) (Cash)",
+      "account": "****1234"
     }
   ]
 }
 ```
 
-### trades.json fields
+| Field | Description |
+|-------|-------------|
+| `id` | SnapTrade activity id — the dedupe key. Never changes. |
+| `date` | Broker date (for Fidelity, the posting date — up to a trading day after the trade) |
+| `type` | `BUY` · `SELL` · `REI` (reinvestment) · `DIVIDEND` · `CONTRIBUTION` · `WITHDRAWAL` · `FEE` · `TAX` · `JOURNALED` · `LOAN` (share deposit, e.g. a conversion) · `ADJUSTMENT` · `SPLIT` · `SPINOFF` · `OPTIONEXPIRATION` |
+| `symbol` / `raw_symbol` | Canonical symbol (`scripts/symbols.py`) / the broker's spelling. Empty for cash rows and most option rows; CUSIP-keyed for some corporate-action legs. |
+| `units` | Signed share/contract count (negative = out) |
+| `price`, `amount`, `fee` | Per-unit price, signed cash amount, fee |
+| `option` | OCC contract symbol for option rows, else `""` |
+| `account` | Masked account number |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Stable ID. Format: `trade-<TICKER>-<YYYYMMDD>-<NNN>`. Never changed. |
-| `date` | YYYY-MM-DD | Execution date |
-| `ticker` | string | Uppercase symbol |
-| `action` | enum | `"buy"` · `"sell"` · `"add"` · `"trim"` |
-| `amount_usd` | number | Dollar value of the trade |
-| `shares` | number \| null | Number of shares (backfilled from brokerage export when available) |
-| `price_per_share` | number \| null | Execution price per share (backfilled from brokerage export) |
-| `comment` | string \| null | Optional free-text note |
-| `notion_page_id` | string | Notion page ID for the corresponding Investment Log row |
-| `notion_url` | string | Direct Notion URL |
-| `linked_research` | array | Research runs that motivated this specific trade (subset of all runs covering the ticker) |
+**How consumers read it** (`scripts/ledger.py`):
 
-### linked_research[] fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `run` | string | Research run slug |
-| `date` | YYYY-MM-DD | Date the research run completed |
-| `report_path` | string | Path to the ticker-level report file |
-| `market_verdict` | string \| null | The run's Market verdict for this ticker when the link was made (`"Buy"` / `"Hold"` / `"Avoid"`). The dashboard uses it as stored; if null, it reads the verdict from the run's report. |
-| `linked_at` | YYYY-MM-DD | Date the link was made (may differ from trade date for retroactive linking) |
-
-**Note:** `linked_research` captures only the research that *drove* this specific trade. A ticker's full research history (all runs that ever covered it) lives in `reports/`.
+- **Stock trades** = `BUY` / `SELL` / `REI` rows on quote symbols, plus share-bearing non-trade rows (`LOAN`, `ADJUSTMENT`, …) as transfers valued at the row's amount. Option rows, the cash sweep, and CUSIP-keyed legs are excluded.
+- **Opening lots** — holdings that predate `history_start` get a synthesized lot: snapshot units − ledger net (at least the deepest running deficit; within a day buys apply before sells). The dashboard prices it at the first close on/after `history_start`, so P&L on those shares counts from the start of the record.
+- **Cross-check** — opening lots + ledger net must equal the snapshot's shares for every symbol; a mismatch is a warning on the snapshot (`/sync-portfolio` reports it).
+- **Research links** — the dashboard links each fill to the newest run covering the ticker dated on/before the fill (≤180 days old), with that run's Market verdict (`scripts/research_index.py`). Nothing is linked by hand.
 
 ---
 
@@ -112,7 +99,7 @@ Written by `/what-if`. Each scenario is a hypothetical portfolio the dashboard o
 
 ### Per-type payload
 
-- **`substitute`** — clones the actual trade log with swaps. `overrides[]` entries are either `{ "from": "<TICKER>", "to": "<TICKER>" }` (swaps every trade in that ticker, buys and sells — preferred) or `{ "trade_id": "<trades.json id>", "ticker": "<TICKER>" }` (swaps one specific trade only). Swapped buys convert the same dollars into the target at its close; swapped sells sell the same *fraction* of the hypothetical position as the original sell took of the real one.
+- **`substitute`** — clones the actual trade log with swaps. `overrides[]` entries are either `{ "from": "<TICKER>", "to": "<TICKER>" }` (swaps every trade in that ticker, buys and sells — preferred) or `{ "trade_id": "<ledger activity id>", "ticker": "<TICKER>" }` (swaps one specific trade only). Swapped buys convert the same dollars into the target at its close; swapped sells sell the same *fraction* of the hypothetical position as the original sell took of the real one.
 - **`benchmark`** — `benchmark_ticker: "<TICKER>"`: every actual trade re-executed into that one ticker, same dates and amounts ("what if I'd just bought SPY").
 - **`standalone`** — `trades[]`: an explicit hypothetical trade list, each `{ date, ticker, action, amount_usd }` (or explicit `shares` + `price_per_share`). Recurring plans (DCA) are expanded into explicit dated trades by `/what-if` at creation.
 
@@ -194,10 +181,10 @@ Notes:
 
 - `fetched_at: null` means the file is still the untouched template — `/sync-portfolio` in review-only mode stops rather than reviewing nothing.
 - Account numbers are masked to the last 4 digits before hitting disk; the full number is never stored.
-- `activities` covers only the trailing `lookback_days` window (default 90) — it is a reconciliation aid for `trades.json`, not a full trade history.
+- `activities` covers only the trailing `lookback_days` window (default 90). The full history lives in `ledger.json`, which every sync merges these into.
 - Positions are sorted by market value descending; activities by date descending.
 - `symbol` (and options' `underlying`) is canonical (`scripts/symbols.py` — Fidelity's `BRKB` is stored as `BRK-B`); the broker's own spelling is kept as `raw_symbol` / `raw_underlying`. Snapshots from before this change have no `raw_*` fields and may hold broker spellings — readers canonicalize, so they still work.
-- Activity `date` is the broker's date, which for Fidelity is the posting date (up to a trading day after the trade). `scripts/reconcile_trades.py` accounts for that when matching against `trades.json`.
+- Activity `date` is the broker's date, which for Fidelity is the posting date (up to a trading day after the trade).
 - **`balance.cash` is derived, not SnapTrade's cash line.** Fidelity's core-sweep (SPAXX) units — reported both as the `cash_equivalent: true` position and as `/balances` cash — can lag the account's real cash by thousands, while `total` and security prices are current. So `cash` = `total` − non-cash-equivalent positions − net options value: the actual cash holdings (Fidelity's "Cash and credits"), **including** cash reserved as option collateral. `cash_breakdown` splits it: `collateral_reserved` = Σ short puts strike × multiplier × contracts; `free` = SnapTrade `buying_power` (settled, unreserved — Fidelity's "Available to trade"). `cash_check` cross-validates (`free + collateral_reserved` must equal `cash` within $1; `agree: false` → a snapshot warning, `cash` keeps the first method) and records `reported_lag` = `cash_reported` − `cash`. The cash-equivalent position's own `market_value` carries the lagged figure. Snapshots from before this change lack these fields — their `cash` is the raw SnapTrade line.
 - `warnings[]` records sub-endpoint failures (e.g. one account's activities endpoint down) — the snapshot is still valid, just partial.
 

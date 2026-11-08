@@ -4,7 +4,7 @@ description: Create and manage hypothetical "what-if" portfolio scenarios — co
 
 Create or manage a **what-if scenario** — a hypothetical portfolio computed from daily closes and overlaid on the dashboard's P&L value chart next to the actual portfolio. This is counterfactual comparison of concrete trade histories ("what if I'd bought AMD instead of NVDA?", "what if I'd just DCA'd into SPY?"), **not** strategy backtesting — no rebalancing rules, no dividends, no intraday fills. Directional sanity-checking, not precise P&L.
 
-A what-if run does **no** research and writes **no** Notion. It edits `tracking/hypotheticals.json` (schema in `tracking/README.md`), regenerates the dashboard when `scripts/dashboard_due.py` says it's due, and lands on its own branch + PR (same git flow as `/journal`).
+A what-if run does **no** research. It edits `tracking/hypotheticals.json` (schema in `tracking/README.md`), regenerates the dashboard when `scripts/dashboard_due.py` says it's due, and lands on its own branch + PR (same git flow as `/journal`).
 
 Everything the user typed after `/what-if` is either a **new scenario description** (the default) or a **management request** — archive, reactivate, rename, or delete-flavored phrasings ("get rid of", "bring back", "call it X instead"). Detect by intent, not keywords. If nothing was typed, ask what scenario they'd like to explore.
 
@@ -28,7 +28,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
 
 3. **Parse the scenario into one of three types** (schema details in `tracking/README.md`):
 
-   - **`substitute`** — "what if instead of buying X I'd bought Y". Read `tracking/trades.json` and identify the referenced trades. **Prefer a ticker-level override** `{ "from": "NVDA", "to": "AMD" }`, which swaps the whole chain (buys *and* later sells stay consistent). Use a per-trade override `{ "trade_id": "...", "ticker": "..." }` only when the user singles out one specific trade — and warn them that any later sell of the original ticker will then exceed its remaining buys and drop that ticker from the chart. If the referenced trade/ticker isn't in `trades.json`, say so and stop.
+   - **`substitute`** — "what if instead of buying X I'd bought Y". Read the actual trades from the broker ledger — `tracking/ledger.json`, rows `scripts/ledger.py` treats as stock trades (`python3 scripts/ledger.py --json` summarizes it) — and identify the referenced trades. **Prefer a ticker-level override** `{ "from": "NVDA", "to": "AMD" }`, which swaps the whole chain (buys *and* later sells stay consistent). Use a per-trade override `{ "trade_id": "<ledger activity id>", "ticker": "..." }` only when the user singles out one specific trade — and warn them that any later sell of the original ticker will then exceed its remaining buys and drop that ticker from the chart. If the referenced trade/ticker isn't in the ledger, say so and stop.
    - **`benchmark`** — "what if I'd put the same money into SPY/QQQ/…" → `benchmark_ticker`. Every actual trade is re-executed into that one ticker, same dates and amounts.
    - **`standalone`** — an explicit hypothetical trade list with no reference to the actual log. Expand recurring phrasings ("$500/month into QQQ since March") into explicit dated trades — one per period on the same day-of-month (clamped to month end), absolute dates, each `{ date, ticker, action, amount_usd }`. Do **not** compute shares or prices — the dashboard script derives them from daily closes.
 
@@ -78,7 +78,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
 ## Examples
 
 `/what-if I'd bought AMD instead of NVDA back in March`
-→ reads trades.json, finds the NVDA trades → `substitute` with `{from: NVDA, to: AMD}` → name `"AMD instead of NVDA (2026-03-02)"` confirmed → branch `whatif/2026-07-11-001` → write + preview (`value $5,281 | P&L +$3,887 | vs actual P&L +$2,447`) → commit/PR questions.
+→ reads the ledger, finds the NVDA trades → `substitute` with `{from: NVDA, to: AMD}` → name `"AMD instead of NVDA (2026-03-02)"` confirmed → branch `whatif/2026-07-11-001` → write + preview (`value $5,281 | P&L +$3,887 | vs actual P&L +$2,447`) → commit/PR questions.
 
 `/what-if just track what putting the same money into SPY would have done`
 → `benchmark` with `benchmark_ticker: "SPY"` → same flow.
@@ -92,5 +92,5 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
 ## Handling missing input
 
 - Empty `/what-if`: ask what scenario to explore before doing anything.
-- A substitute referencing trades that don't exist in `trades.json`: report what *is* in the log and stop — never invent trades.
+- A substitute referencing trades that don't exist in the ledger: report what *is* there and stop — never invent trades.
 - A hypothetical ticker with no price history at preview time: surface the warning and let the user fix or abandon; never silently commit a scenario that can't render.
