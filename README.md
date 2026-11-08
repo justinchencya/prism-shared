@@ -235,7 +235,44 @@ Pulls your **real brokerage state** — accounts, balances, positions, options �
 
 ---
 
-The six commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, sync the trade you made, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
+## Options
+
+```
+/options <what you want to do>
+/options-watch [focus]
+```
+
+**`/options`** picks **one** option trade plus a runner-up for an intent you state in plain words, and explains it in English (what you're betting, by when, at what price, how you win and lose). The key question is which side you want to win on:
+
+| You say… | Strategy | You want the option to… |
+|---|---|---|
+| "sell a covered call on my NVDA for pocket money" | covered call | **expire worthless** |
+| "sell a put on QQQ/SPY/NVDA with $30k, I don't want to buy" | cash-secured put | **expire worthless** |
+| "protect my NVDA over earnings" | protective put, put spread, or collar | **gain value** if the stock falls |
+| "GOOG got overpunished, rebound in 1–2 months" | long call or call spread | **gain value** (needs a target + horizon) |
+
+With no intent it runs a portfolio-wide income scan. Out of scope: condors, calendars, straddles, rolls (rolls live in `/options-watch`).
+
+**How it works:** `scripts/options_pick.py` pulls the live chain from Yahoo Finance (bid/ask/OI, ~15-min delayed, no greeks), solves IV and delta from the mid (Black-Scholes), and joins the chart structure (`technical_structure.py` support/resistance and break level), earnings dates, research verdicts, and your brokerage snapshot (shares free to call, free cash, long options already held). Income picks score on yield × chance of keeping the premium; hedges and bullish trades score on scenario P&L (hedge valued the day after the event with an IV-crush assumption; bullish valued at your horizon vs your target). **SnapTrade has no option chains** — it only supplies what you already hold. There is no IV rank (no free history); `iv_rv` (implied ÷ 30-day realized vol) is the richness proxy. Fills are modeled at mid ± 25% of the spread.
+
+**`/options-watch`** is the daily maintenance pass over options you **already hold**: short options that are ≥75% profitable (close early), near expiry, in the money or high delta, or ex-dividend-exposed; long options decaying toward expiry. Flagged shorts get a drafted roll (net credit/debit, new strike and delta). It is quiet when nothing needs action and built for scheduling: it fetches fresh holdings to a scratch file (no diff, no branch, no PR) when SnapTrade credentials are present, otherwise reads the committed snapshot and says how old it is.
+
+Both are **read-only** — no orders, no files, no git. Option fills land in the broker ledger (`tracking/ledger.json`) at the next `/sync-portfolio`.
+
+**Examples:**
+
+```
+/options sell a covered call on NVDA
+/options $30k cash-secured put on NVDA, I'd be fine owning it
+/options protect 500 NVDA over earnings
+/options bullish GOOG, rebound to $330 within 6 weeks
+/options-watch
+/options-watch just the shorts
+```
+
+---
+
+The eight commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, sync the trade you made, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
 
 ---
 
