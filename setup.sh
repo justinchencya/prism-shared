@@ -12,26 +12,16 @@ ok()   { echo "  [ok] $*"; ((PASS++)) || true; }
 warn() { echo "  [!!] $*"; ((FAIL++)) || true; }
 info() { echo "  [--] $*"; }   # optional / degrades gracefully — not counted as a failure
 
-# Pick a pip-capable Python interpreter.
-# Prefer an interpreter where pip can install packages (not an externally-managed
-# Homebrew Python). Try 'python' first (resolves to conda/system on many setups
-# where 'python3' may be Homebrew-managed), then 'python3'.
-pick_python() {
-  for cmd in python python3; do
-    if ! command -v "$cmd" &>/dev/null; then continue; fi
-    # Check pip works without the externally-managed-environment error
-    if $cmd -m pip install --dry-run pip &>/dev/null 2>&1; then
-      echo "$cmd"; return
-    fi
-  done
-  # Fallback: use whatever Python exists, even if pip is restricted
-  for cmd in python python3; do
-    if command -v "$cmd" &>/dev/null; then echo "$cmd"; return; fi
-  done
-  echo "ERROR: no python or python3 found in PATH" >&2
+# The interpreter every command runs: `python3` (commands invoke
+# `python3 scripts/...`). Packages must land in *that* interpreter — installing
+# into `python` breaks wherever `python` and `python3` resolve differently.
+# Override with PRISM_PYTHON=/path/to/python3.x to pin a specific one.
+PYTHON="${PRISM_PYTHON:-python3}"
+if ! command -v "$PYTHON" &>/dev/null; then
+  echo "ERROR: $PYTHON not found in PATH (set PRISM_PYTHON to a Python 3.10+ interpreter)" >&2
   exit 1
-}
-PYTHON="$(pick_python)"
+fi
+MIN_PY="3.10"   # scripts use PEP 604 annotations (str | None); stdlib-only scripts are 3.8+
 
 echo ""
 echo "=== Prism setup ==="
@@ -39,9 +29,28 @@ echo ""
 
 # --- Python packages -------------------------------------------------------
 
-echo "Python packages:"
-echo "  using: $($PYTHON -c 'import sys; print(sys.executable)')"
+echo "Python:"
+PY_VER="$($PYTHON -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+if $PYTHON -c "import sys; sys.exit(0 if sys.version_info >= tuple(map(int, '$MIN_PY'.split('.'))) else 1)"; then
+  ok "$PYTHON is Python $PY_VER ($($PYTHON -c 'import sys; print(sys.executable)'))"
+else
+  warn "$PYTHON is Python $PY_VER — Prism needs $MIN_PY+; set PRISM_PYTHON to a newer interpreter"
+fi
+# Every engine script must at least compile on this interpreter — catches
+# version-specific syntax before a scheduled run trips over it.
+BAD_PY=""
+for f in "$REPO_DIR"/scripts/*.py "$REPO_DIR"/.claude/hooks/*.py; do
+  [[ -f "$f" ]] || continue
+  $PYTHON -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" "$f" 2>/dev/null || BAD_PY="$BAD_PY ${f#$REPO_DIR/}"
+done
+if [[ -z "$BAD_PY" ]]; then
+  ok "all scripts compile on Python $PY_VER"
+else
+  warn "scripts that don't compile on Python $PY_VER:$BAD_PY"
+fi
 echo ""
+
+echo "Python packages:"
 
 install_if_missing() {
   local pkg="$1"
@@ -63,6 +72,13 @@ install_if_missing() {
 }
 
 install_if_missing "yfinance"
+# matplotlib needs a working Pillow. Some images ship a distro Pillow built for
+# another Python that imports but can't load its C module — install a private
+# copy over it when that's the case.
+if ! $PYTHON -c "from PIL import Image" 2>/dev/null; then
+  $PYTHON -m pip install -q --ignore-installed pillow 2>/dev/null \
+    || $PYTHON -m pip install -q --user --ignore-installed pillow 2>/dev/null || true
+fi
 install_if_missing "matplotlib"   # annotated K-line charts (scripts/technical_structure.py)
 
 echo ""
@@ -139,6 +155,8 @@ echo "Settings files:"
 
 if [[ -f "$REPO_DIR/.env" ]]; then
   ok ".env present"
+elif [[ -n "${OPENAI_API_KEY:-}${SNAPTRADE_CLIENT_ID:-}${EDGAR_CONTACT_EMAIL:-}${X_BEARER_TOKEN:-}" ]]; then
+  info ".env not found — keys come from the environment instead (hosted sandbox); nothing to do"
 else
   warn ".env not found — copy the template and fill in your keys"
   echo "       cp .env.example .env"
