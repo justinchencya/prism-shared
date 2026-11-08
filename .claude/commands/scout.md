@@ -23,6 +23,8 @@ git switch -c scout/<timestamp>
 
 If the switch, pull, or branch fails, report and stop — never stash, reset, or force.
 
+**Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `scout: <2–5 word English gist of the focus>`. Do it whatever language the input was in. If the tool isn't available (e.g. a local CLI session), skip it silently. The ship gate re-checks this (see **Session title** in `CLAUDE.md`).
+
 Call the `scout` agent via the `Agent` tool with a prompt that includes:
 
 - The **focus**, verbatim.
@@ -37,7 +39,7 @@ The scout run is a self-contained artifact. To commit it:
 
 1. **Show the results first, then the files** — before any prompt, output as plain text the path to `brief.md` and the agent's terse ranked candidate list (with the `/research "<question>"` reminder below), so the user can read it while answering. Text emitted mid-turn between tool calls is not reliably visible, so the list is also carried inside the Step 2 prompt and repeated in the final report-back. Then show the file that would be committed (`scouts/<timestamp>/brief.md` and supporting files).
 
-2. **Ship gate** (per **Git convention** in `CLAUDE.md`) — a single `AskUserQuestion` call with **one** question, "Ship this scout brief?", and three options in this order:
+2. **Ship gate** (per **Git convention** in `CLAUDE.md`) — **Session-title check first:** if the session-title step above didn't run and the tool is available, run it now — the title must be set before the gate is shown. Then a single `AskUserQuestion` call with **one** question, "Ship this scout brief?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"

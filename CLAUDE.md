@@ -108,7 +108,7 @@ test ! -e .prism-engine || { echo "engine repo — run this in your private repo
 git status --porcelain                               # clean-tree guard: unrelated changes → stop & report
 git switch main && git pull --ff-only origin main    # the ONE sync
 git switch -c <type>/<identifier>                     # branch off fresh main, BEFORE the work
-# non-English input + set_session_title tool available → rename the session to "<type>: <English identifier>" (see Voice)
+# set_session_title tool available → set the session title to "<type>: <English identifier>" NOW (see Session title)
 # ... the command does its work ON THE BRANCH: agent run / file writes ...
 # ── at commit time, after showing files + the ship gate's yes ──
 python3 scripts/dashboard_due.py && python3 scripts/generate_dashboard.py   # only if the run mutated a dashboard input
@@ -124,6 +124,7 @@ git switch main                                       # always finish on main
 - **Engine-repo guard** — `.prism-engine` at the repo root marks the public engine repo (prism-shared); every command except `/sync` stops there and points the user to their private repo. Single-repo setups delete the marker.
 - **Clean-tree guard** — before pulling/branching, if `git status --porcelain` shows changes unrelated to this run, stop and report; never stash or sweep them in.
 - **Decline path** — if the user picks *Don't commit* at the ship gate, return to `main` and drop the unused local branch: `git switch main && git branch -D <type>/<identifier>` (the work returns to the working tree; nothing was pushed). Tracking-file edits already made remain in the working tree — only the branch is discarded.
+- **Session title** — every command sets the session title as its own required step right after the branch cut (`/sync-portfolio`: right after mode detection, so review-only runs get one too): when a `set_session_title` tool is available (cloud sessions), call `get_session` with no `session_id` for this session's id, then `set_session_title` with `<type>: <English identifier>` (e.g. `research: nvda-power-cooling`) — for every input, English or not. No tool (local CLI) → skip silently. The ship gate step re-checks it first: if it didn't run, run it before showing the gate.
 - **Failure rule** — any git/`gh` failure: report and stop, no destructive retry.
 - PRs are merged only when the user picks *Ship it* at the ship gate; otherwise left open to merge on GitHub. `/podcast` additionally expects its target report to already be merged into `main` (it verifies the report is present right after the sync, before cutting the branch).
 
@@ -228,7 +229,7 @@ The user is primarily a long-term investor (multi-year core holdings) who also k
 - If something is unknown, say "unknown" — don't write fluently past it.
 - State conviction explicitly when claims are uncertain.
 - Always write in English — session names, saved files, and every message returned — regardless of the input language. Quoting short passages in the original language (e.g. Chinese) is fine when the input or a source is in that language and the quote is needed.
-- **Session titles are not set by this file.** Claude Code titles a session from the first prompt with a separate model call that never reads `CLAUDE.md`, so the rule above can't reach it. Two mechanisms enforce it instead: (1) the `UserPromptSubmit` hook in `.claude/settings.json` (`.claude/hooks/english_session_title.py`) sets an English title — slash command + the prompt's English words/tickers — whenever the first prompt contains CJK text; (2) when the input had non-English text and a `set_session_title` tool is available (cloud sessions), rename the session to the run's English identifier (e.g. `research: nvda-power-cooling`) right after the branch is cut.
+- **Session titles are not set by this file.** Claude Code titles a session from the first prompt with a separate model call that never reads `CLAUDE.md`, so the rule above can't reach it. Two mechanisms enforce it instead: (1) the `UserPromptSubmit` hook in `.claude/settings.json` (`.claude/hooks/english_session_title.py`) sets an English title — slash command + the prompt's English words/tickers — whenever the first prompt contains CJK text; (2) every command sets the title itself, as a required numbered step right after the branch cut, whenever a `set_session_title` tool is available (cloud sessions) — for English input too, so no judgment call can skip it — and its ship gate re-checks it (see **Session title** under Git convention). The hook only covers the first title for CJK prompts and can't know the run's identifier, so the command step is the one that matters.
 
 ## Data sources
 

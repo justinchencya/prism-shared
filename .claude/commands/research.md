@@ -27,7 +27,9 @@ git switch main && git pull --ff-only origin main
 git switch -c research/<id>
 ```
 
-If the switch, pull, or branch fails, report and stop — never stash, reset, or force. If the question had non-English text and a `set_session_title` tool is available, rename the session to `research: <slug>` now (see **Voice** in `CLAUDE.md`).
+If the switch, pull, or branch fails, report and stop — never stash, reset, or force.
+
+**Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `research: <slug>`. Do it whatever language the input was in. If the tool isn't available (e.g. a local CLI session), skip it silently. The ship gate re-checks this (see **Session title** in `CLAUDE.md`).
 
 ### Orchestrating the director (you dispatch; the director only plans/critiques/synthesizes)
 
@@ -63,7 +65,7 @@ After the director's Phase 8 report-back (final report path, verdict table, etc.
 
 2. **Show the user** the list of files that would be committed (`reports/<id>/`), using `git status --short` or a plain file listing, plus the dashboard decision line.
 
-3. **Ship gate** — a single `AskUserQuestion` call with **one** question, "Ship this research run?", and three options in this order:
+3. **Ship gate** — **Session-title check first:** if the session-title step above didn't run and the tool is available, run it now — the title must be set before the gate is shown. Then a single `AskUserQuestion` call with **one** question, "Ship this research run?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"

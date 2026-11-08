@@ -39,6 +39,8 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
    If the branch step fails, report and stop. Everything below — `journal.json`, dashboard regen — happens on this branch.
 
+   **Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `journal: <2–5 word English gist of the reflection>`. Do it whatever language the input was in. If the tool isn't available (e.g. a local CLI session), skip it silently. The ship gate re-checks this (see **Session title** in `CLAUDE.md`).
+
 3. **Suggest and confirm research links** — find research runs that might relate, and ask which (if any) to link. Always ask, even if nothing obvious matches.
 
    **Finding candidate runs**:
@@ -114,7 +116,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
 7. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (When regenerated, the entry appears as a violet node in the Timeline view.) Also run `python3 scripts/check_consistency.py --paths tracking/journal.json` — it reports only inconsistencies this run introduced (non-canonical symbols, broken `report_path` links); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so.
 
-8. **Ship gate** — the work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`) and the dashboard decision line.
+8. **Ship gate** — **Session-title check first:** if the session-title step above didn't run and the tool is available, run it now — the title must be set before the gate is shown. The work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`) and the dashboard decision line.
 
    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this journal entry?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)

@@ -10,6 +10,8 @@ Sync engine changes between **prism-shared** (public engine, canonical) and **pr
 
 2. **Guard both repos** — in each repo: `git status --porcelain` must be clean (unrelated changes → stop and report; never stash), then `git switch main && git pull --ff-only origin main`. Any failure: report and stop.
 
+   **Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `sync: <YYYY-MM-DD>` (refine it to `sync: <what>` once step 5 fixes the file set, if you like). Do it whatever language the input was in. If the tool isn't available, skip it silently. Step 7's ship gate re-checks this (see **Session title** in `CLAUDE.md`).
+
 3. **Diff the engine file set** — compare the two working trees over engine files only:
 
    ```bash
@@ -34,6 +36,6 @@ Sync engine changes between **prism-shared** (public engine, canonical) and **pr
 
 6. **Sanitize anything flowing into prism-shared** — before copying a file prism → prism-shared, scan it for personal data: real account handles, account/database IDs, API keys or tokens, absolute personal paths (e.g. `/Users/...`, `/root/...`), personal email addresses, hardcoded env values. Generalize or strip them (read from env, use placeholders). If sanitization changes the file meaningfully, note it in the commit message ("cleaned up on port: ..."). prism → prism-shared is a **port**, not a blind copy.
 
-7. **Land as a PR in the receiving repo** — follow the **Git convention**: in the receiving repo, cut `sync/<YYYY-MM-DD>-<slug>` off fresh `main`, copy the confirmed files in, sanity-check (`python3 -c "import ast; ast.parse(open('<file>').read())"` for any `.py`), commit as `sync: <what> from <source repo> (#<source PR>)`, then ask the **ship gate** (one `AskUserQuestion` question: *Ship it — commit, push, PR, merge* / *Commit, push & open PR — leave it open* / *Don't commit*) exactly as the other commands do. No dashboard check — sync touches no dashboard input. Finish on `main` in both repos.
+7. **Land as a PR in the receiving repo** — follow the **Git convention**: in the receiving repo, cut `sync/<YYYY-MM-DD>-<slug>` off fresh `main`, copy the confirmed files in, sanity-check (`python3 -c "import ast; ast.parse(open('<file>').read())"` for any `.py`), commit as `sync: <what> from <source repo> (#<source PR>)`, then — after the session-title check (if the title step above didn't run and the tool is available, run it now) — ask the **ship gate** (one `AskUserQuestion` question: *Ship it — commit, push, PR, merge* / *Commit, push & open PR — leave it open* / *Don't commit*) exactly as the other commands do. No dashboard check — sync touches no dashboard input. Finish on `main` in both repos.
 
 8. **Report** — list what was synced in which direction, what was skipped as expected-diff, and any sanitization applied.
