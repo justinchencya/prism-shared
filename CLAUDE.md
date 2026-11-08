@@ -6,7 +6,7 @@ This is for the user's own thinking. Not advice for anyone else. Skip disclaimer
 
 ## Architecture
 
-Four agents, three entry points. Plus three utility commands with no agent — `/journal` and `/what-if` write only local tracking, `/sync-portfolio` hits SnapTrade directly (and is the only source of trade data — there is no manual trade log). The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
+Four agents, three entry points. Plus five utility commands with no agent — `/journal` and `/what-if` write only local tracking, `/sync-portfolio` hits SnapTrade directly (and is the only source of trade data — there is no manual trade log), `/options` and `/options-watch` are read-only (no files, no git). The commands are **independent** — none assumes another ran first. They can be chained, but nothing depends on it.
 
 | Command | Agent(s) | Prompt file(s) |
 |---|---|---|
@@ -16,6 +16,8 @@ Four agents, three entry points. Plus three utility commands with no agent — `
 | `/journal <reflection>` | — (local tracking direct) | `.claude/commands/journal.md` |
 | `/what-if <scenario>` | — (local tracking direct) | `.claude/commands/what-if.md` |
 | `/sync-portfolio [focus]` | — (SnapTrade direct) | `.claude/commands/sync-portfolio.md` |
+| `/options <intent>` | — (`scripts/options_pick.py`, read-only) | `.claude/commands/options.md` |
+| `/options-watch [focus]` | — (`scripts/options_watch.py`, read-only) | `.claude/commands/options-watch.md` |
 
 The agents' prompts are the rubrics; if output quality drifts, tighten the relevant prompt rather than adding scaffolding.
 
@@ -73,11 +75,27 @@ Pulls the **real brokerage state** and **activity history** via SnapTrade (Perso
 4. **Review** — terse, investor-stance read of the snapshot: concentration, cash, per-position P&L, open options (share encumbrance from short calls, near/past expiries, assignment risk), held names with no research run in `reports/` (→ ready-to-run `/research` questions), and held names whose latest research is >6 months old.
 5. **Commit** — `/sync-portfolio` commits the snapshot + ledger on its own `sync-portfolio/<timestamp>` branch and opens a PR. The ledger is a dashboard input, so the dashboard regenerates when due.
 
+## Options flow
+
+Intent-driven option picks, read-only — no branch, no PR, no files. `/options` returns **one pick + a runner-up** for the stated intent. The split that decides scoring is which side the user wants to win: **income** (`cc`, `csp` — the option should expire worthless) vs **value** (`hedge`, `bullish` — the option should gain value). **SnapTrade has no chains** (only contracts already held, with a mark); chains come from Yahoo via yfinance (`Ticker.options` / `option_chain`: bid/ask/OI/volume, ~15-min delayed, no greeks, no IV history).
+
+1. **Engine** — `scripts/options_pick.py <cc|csp|hedge|bullish> TICKER` solves IV from the bid/ask mid, computes delta / P(ITM) (Black-Scholes, no dividends, european), joins `technical_structure.analyze()` levels, earnings date, 30d realized vol (`iv_rv`; no IV rank is possible without history) and the snapshot (unencumbered shares, free cash, long options already held on the name). Fills are modeled at mid ±25% of the spread. Income score = annualized yield × P(OTM). `hedge` (long put / put spread / collar) is valued the day after the event with an IV-crush assumption and scored by protection at −10/−20% per unit of loss at 0/+10/+20%. `bullish` (long call / call debit spread) is valued at the user's horizon date and scored by scenario-weighted return on premium vs a target price. `scripts/options_screen.py` is the portfolio-wide income scan used for a bare `/options`.
+2. **Judge** — `/options` overlays `research_index.py` verdicts and applies the rubric in `.claude/commands/options.md` (would-you-accept-assignment, strike behind a confluent level, earnings in window, sizing vs the user's cash-weight target, netting against long options already held).
+3. **Report** — fixed template per pick: ticker, expiry, strike(s), est. fill, size, max gain/loss, breakeven, then the plain-English bet (`plain_english` from the engine), how you win/lose, why this strike/date. Never places orders; option fills land in `tracking/ledger.json` via the next `/sync-portfolio`. Out of scope for `/options`: condors, calendars, straddles (rolls are drafted by `/options-watch`).
+
+### Options-watch flow
+
+Daily maintenance over contracts **already held** — scheduled by the user, never by the repo. Read-only and stateless: it writes nothing to the repo and cuts no branch, so a daily run leaves no diff/PR. With SnapTrade credentials it fetches fresh holdings to a **scratch path** (`scripts/fetch_snaptrade.py /tmp/...`), else it reads the committed `tracking/brokerage-snapshot.json` and leads with its age (flags are provisional on a stale snapshot).
+
+1. **Flag** — `scripts/options_watch.py`: shorts → `CLOSE_EARLY` (≥75% of premium kept), `EXPIRING` (≤7d), `ITM`/`HIGH_DELTA` (assignment), `EX_DIV` (short call ITM before an ex-dividend date), `STALE`; longs → `DECAY` (OTM, ≤21d), `EXPIRING`, `STALE`.
+2. **Roll draft** — for `ITM`/`HIGH_DELTA`/`EXPIRING` shorts: buy-to-close + sell 7–45 days past the current expiry, |delta| ≤ 0.30, net credit preferred, OTM rolls never move the strike closer to the money. `CLOSE_EARLY` gets no roll — close, then `/options` for a fresh pick.
+3. **Report** — quiet by default (one line when nothing is flagged); otherwise one block per contract with the action (close / roll / let expire / accept assignment / hold), the dollars, and the roll's net credit or debit.
+
 ## Git convention
 
 Every run lands as its **own branch + Pull Request** — never a direct commit to `main`. The **agents never touch git** — the commands own it. Remote is named `origin`; base branch is `main`.
 
-**Branch-first, uniform across all six.** Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
+**Branch-first, uniform across all six git-writing commands** (`/options` and `/options-watch` are read-only and exempt). Every command follows the identical order: **compute a standardized branch name up front → pull `main` → cut the branch off `main` → do the work *on the branch* → commit → PR → merge.** The branch is created *before* any work, so the run happens on its own branch from the first write — `main`'s working tree is never touched. Because the name is fixed up front, the agents are told the exact run-dir to write into (they no longer invent their own).
 
 Standardized branch names — `<type>/<identifier>`, all date-prefixed, all computable before the work:
 
