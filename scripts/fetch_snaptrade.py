@@ -37,6 +37,8 @@ Design:
     reasons over the snapshot.
   - Account numbers are masked to the last 4 digits before writing; the full
     number never touches disk.
+  - Symbols are canonicalized (scripts/symbols.py — Fidelity's BRKB → BRK-B);
+    the broker's spelling is kept beside it as raw_symbol / raw_underlying.
 
 API notes (https://docs.snaptrade.com/docs/requests):
   Every request carries query params clientId + timestamp and a Signature
@@ -55,6 +57,9 @@ from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from symbols import canonical  # noqa: E402
 
 BASE = "https://api.snaptrade.com"
 API_PREFIX = "/api/v1"
@@ -168,7 +173,8 @@ def normalize_position(position: dict) -> dict:
     if isinstance(units, (int, float)) and isinstance(price, (int, float)):
         market_value = round(units * price, 2)
     return {
-        "symbol": sym["symbol"],
+        "symbol": canonical(sym["symbol"]),
+        "raw_symbol": sym["symbol"],
         "description": sym["description"],
         "units": units,
         "price": price,
@@ -204,7 +210,8 @@ def normalize_option(holding: dict) -> dict:
         direction = "Short" if units < 0 else "Long"
 
     return {
-        "underlying": underlying.get("symbol") or "",
+        "underlying": canonical(underlying.get("symbol")),
+        "raw_underlying": underlying.get("symbol") or "",
         "description": underlying.get("description") or "",
         "occ_symbol": (contract.get("ticker") or "").strip(),
         "option_type": (contract.get("option_type") or "").upper(),
@@ -316,7 +323,8 @@ def normalize_activity(activity: dict) -> dict:
     return {
         "date": str(trade_date)[:10],
         "type": activity.get("type") or "",
-        "symbol": sym,
+        "symbol": canonical(sym),
+        "raw_symbol": sym,
         "units": activity.get("units"),
         "price": activity.get("price"),
         "amount": activity.get("amount"),

@@ -34,7 +34,7 @@ The Investment Log identifiers are read from the environment so the engine carri
    - **Resolve today's date from the system clock** by running `date +%Y-%m-%d` — never rely on a date carried in context, which may be stale. Use this value as "today" everywhere below (the `date` field default, `linked_at`, the trade `id` date segment, and `last_updated`).
 
 2. **Parse the input** — everything after `/log-trade` is the user's natural-language description. Extract:
-   - `ticker`: the stock ticker symbol (e.g. NVDA, AMZN)
+   - `ticker`: the stock ticker symbol (e.g. NVDA, AMZN). Canonicalize it with `python3 scripts/symbols.py --check <ticker>` (e.g. `BRK.B`/`BRKB` → `BRK-B`, `000660-KS` → `000660.KS`) and use the printed symbol everywhere below — branch, trade `id`, Notion `Ticker`, `trades.json`. If `--check` exits 1, the input isn't a quote symbol: ask for the actual ticker.
    - `amount`: the dollar amount as an absolute value (e.g. 1317.70)
    - `action_type`: parse from the description verb — `"buy"` / `"add"` / `"trim"` / `"sell"`
    - `date`: if mentioned, parse to ISO 8601 (YYYY-MM-DD); otherwise use today's date
@@ -59,9 +59,8 @@ The Investment Log identifiers are read from the environment so the engine carri
 4. **Link to research** — find research runs that covered this ticker and ask the user to select which informed this trade. Do this before inserting to Notion so the link can be included in a single write.
 
    **Finding relevant runs**:
-   - Scan `reports/` for runs that covered the ticker: `reports/<run-dir>/tickers/<TICKER>.md` exists, or `reports/<run-dir>/final-report.md` mentions `$<TICKER>`.
-   - Read each run's Market verdict for the ticker from its final report's verdict table (or its `### $TICKER — <verdict>` heading), falling back to the `**Market verdict:**` line in `tickers/<TICKER>.md` / `ticker-scan.md`.
-   - Deduplicate. Sort by date descending. Cap at 10 most recent.
+   - Run `python3 scripts/research_index.py <TICKER> --json` — it lists every run that covered the ticker (a `tickers/<SYMBOL>.md` file or a `$<SYMBOL>` mention in the final report, symbols compared canonically so legacy spellings and GOOGL/GOOG still match), newest first, each with its Market verdict and the `report_path` that actually holds the coverage. Don't re-derive coverage or verdicts by hand.
+   - Cap at the 10 most recent.
 
    **If no runs found**:
    Display: `"No research runs found for [TICKER]."`
@@ -90,8 +89,8 @@ The Investment Log identifiers are read from the environment so the engine carri
    {
      "run": "<run-dir-name e.g. 2026-06-07-ai-semi-dip-fed-spacex>",
      "date": "<YYYY-MM-DD>",
-     "report_path": "reports/<run-dir>/tickers/<TICKER>.md",  // ticker symbol exactly as given, preserving hyphens (e.g. BRK-B.md)
-     "market_verdict": "<the run's Market verdict for this ticker, or null if none>",
+     "report_path": "<the run's report_path from research_index.py — never a constructed path>",
+     "market_verdict": "<the run's verdict from research_index.py, or null if none>",
      "linked_at": "<today YYYY-MM-DD>"
    }
    ```
@@ -155,7 +154,7 @@ The Investment Log identifiers are read from the environment so the engine carri
 
    Update `last_updated` to today. Write the file. Report: `"Logged to tracking/trades.json (ID: trade-AVGO-20260607-001)."`
 
-8. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet.
+8. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. Also run `python3 scripts/check_consistency.py --paths tracking/trades.json` — it reports only inconsistencies this run introduced (non-canonical symbols, broken `report_path` links); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so.
 
 9. **Ship gate** — the work is already on the `log-trade/<date>-<slug>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/trades.json`) and the dashboard decision line.
 

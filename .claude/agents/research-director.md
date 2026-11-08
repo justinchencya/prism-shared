@@ -171,7 +171,7 @@ Otherwise (low/medium/high), write a dispatch manifest (`phase: "ticker-initial"
 - The investment hypothesis (verbatim from `ticker-hypotheses.md`).
 - The open questions (verbatim).
 - Paths to the round-1 reports cited in the ticker's origin — instruction to read them before starting.
-- Output path: `reports/<run>/tickers/<TICKER>.md` — use the ticker symbol exactly as given, preserving hyphens (e.g. `BRK-B.md`, not `BRKB.md`).
+- Output path: `reports/<run>/tickers/<TICKER>.md` — `<TICKER>` is the canonical symbol printed by `python3 scripts/symbols.py --check <TICKER>` (Yahoo spelling: `BRK-B.md`, `000660.KS.md`; never `BRKB.md` or `000660-KS.md`). Canonicalize every ticker before writing the manifest. A name `--check` rejects (a company with no listed symbol, a pair like `SPCX-SPY`) gets no ticker file — cover it inside a real ticker's report or in the final report.
 - Mode: **initial (ticker sub-mode)**.
 - **13F breadth flag**: `include_13f: yes` when effort is **high** OR the user explicitly asked for the institutional/13F lens in the question or sources; otherwise `include_13f: no`. The researcher's Step 3d (`scripts/fetch_13f_breadth.py`, minutes per name) runs only on `yes`.
 - Explicit instruction: the report must produce **two separate verdicts**:

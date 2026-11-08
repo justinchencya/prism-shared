@@ -33,12 +33,21 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
    - Exit 2 (credentials missing after all — e.g. empty values) → drop back cleanly (`git switch main && git branch -D sync-portfolio/<id>`) and continue in review-only mode from the committed snapshot.
    - Exit 1 (credentials rejected / network / no accounts) → report the script's stderr, clean up the branch the same way, and stop.
 
-4. **Check the trade log against the snapshot** (read-only — this step never writes):
+4. **Check the trade log against the snapshot** (read-only — this step never writes): run
 
-   - **Unlogged trades** — snapshot activities of type buy/sell with no matching `trades.json` entry (match on ticker + date ±1 day + direction). **Never write `trades.json` here** — it mirrors the Notion Investment Log 1:1 and is owned by `/log-trade`; list the misses and suggest `/log-trade` per trade instead.
-   - **Share-count drift** — a name in both the snapshot and `trades.json`, but snapshot units disagree materially with what `trades.json` history implies → report the delta (informational; the snapshot is the truth).
+   ```bash
+   python3 scripts/reconcile_trades.py --json
+   ```
 
-   If both lists are empty, say `"Trade log is consistent with the brokerage."` and move on.
+   and report what it returns — don't re-derive matches by hand. It matches stock BUY/SELL activities in the lookback window to `trades.json` on canonical symbol (`BRKB` == `BRK-B`; GOOGL ≠ GOOG), direction, and a trading-day date window (broker dates run up to a day after the trade, logs sometimes a day late), price-first and quantity-aware. Its rules are in the script's docstring.
+
+   - **`unlogged` / `partially_logged`** — broker fills the log doesn't cover. **Never write `trades.json` here** — it mirrors the Notion Investment Log 1:1 and is owned by `/log-trade`; list the notable ones and suggest `/log-trade` per trade.
+   - **`automatic`** — broker-initiated rows (ESPP / SPP purchases, conversions): mention, don't count as unlogged.
+   - **`logged_not_at_broker`** — log entries no broker fill absorbed (wrong date/size in the log, or another account). `pending` ones are too recent to have posted — ignore.
+   - **`net_residual_by_symbol`** — in-window share drift (broker − log). Drift vs all-time holdings is not reported: `trades.json` doesn't cover holdings that predate it.
+   - **`skipped`** — option fills (not logged in `trades.json`), cash-sweep and non-trade rows: one line of counts.
+
+   If `unlogged`, `partially_logged`, and `logged_not_at_broker` are all empty, say `"Trade log is consistent with the brokerage."` and move on.
 
 5. **Review** — the chat-facing product. Read the snapshot (plus the `reports/` runs covering held names) and write a terse, falsifiable review — Prism voice, investor stance (mostly multi-year holds plus a small speculative sleeve — don't judge an evidently short-term position by a multi-year bar), no disclaimers:
 
@@ -49,14 +58,15 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
      - **Share encumbrance** — for each short call, `contracts x multiplier` shares of the underlying are committed. Compare against the held share count and say what fraction is encumbered; a short call on a name held below the contract size is **naked**, flag it explicitly.
      - **Expiry proximity** — contracts expiring within ~2 weeks, and any whose expiry has already passed relative to today (a stale line the brokerage hasn't cleared yet). Note assignment risk where the underlying's current price is through the strike.
      State "no open option contracts" when the array is empty, and say so plainly if `options[]` is absent from an older snapshot rather than inferring none.
-   - **Held without research** — held positions (excluding index funds and the cash sweep) that no run in `reports/` covered (no `tickers/<TICKER>.md`, no `$<TICKER>` in any `final-report.md`): name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. The snapshot knows *what* is held; this flags *what lacks a why*.
+   - **Research coverage** — run `python3 scripts/research_index.py <every held symbol and option underlying> --json` once; it returns each name's covering runs (newest first) with Market verdicts, matching symbols canonically. Don't grep reports by hand.
+   - **Held without research** — held positions (excluding index funds and `cash_equivalent` positions) with no covering run: name them plainly ("held with no research run on file") and list them as ready-to-run `/research` questions. The snapshot knows *what* is held; this flags *what lacks a why*.
    - **Stale research** — held names whose most recent covering run is >6 months old (run date = the report dir's date prefix). Give the run, its date, and its Market verdict for the name, and suggest a refresh `/research` question.
    - **Recent activity** — notable buys/sells/dividends/deposits from the lookback window, cross-linked to `trades.json`/journal entries where they exist.
    - If the user gave a focus hint, weight the review toward it. State "unknown" where the snapshot doesn't answer something; never fill gaps fluently.
 
    In review-only mode Steps 4–5 run against the committed snapshot; nothing is written.
 
-6. **Ship gate** (sync mode only) — **show the user** the file to be committed: `tracking/brokerage-snapshot.json`. The snapshot is not a dashboard input, so there's no dashboard check or regen.
+6. **Ship gate** (sync mode only) — **show the user** the file to be committed: `tracking/brokerage-snapshot.json`. The snapshot is not a dashboard input, so there's no dashboard check or regen. Run `python3 scripts/check_consistency.py --paths tracking/brokerage-snapshot.json`; if it exits 1, show its output with the ship gate (a fetcher bug, not something to patch in the snapshot).
 
    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this portfolio sync?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)

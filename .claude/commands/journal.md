@@ -43,7 +43,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
 
    **Finding candidate runs**:
    - Scan the reflection text for ticker symbols and topic keywords.
-   - For any ticker mentioned in the text, find runs that covered it: `grep -l` for `$<TICKER>` across `reports/*/final-report.md`.
+   - For any ticker mentioned in the text, find runs that covered it: `python3 scripts/research_index.py <TICKER> ... --json` (canonical symbol matching; don't grep by hand).
    - Scan `reports/` directories (most recent first): surface runs whose slug or `question` frontmatter matches a keyword from the text, plus the 5 most recent runs regardless of match (recent thinking is often what a reflection is reacting to).
    - Deduplicate, sort by date descending, cap at 10.
 
@@ -86,7 +86,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
    ```
    - If none detected, ask `"Any tickers to link? (comma-separated symbols, or 'none')"`.
 
-   **Parse the response** the same way (numbers / `all` / `none`). The result is `linked_tickers` — a flat array of symbols, e.g. `["MSFT", "NVDA"]`.
+   **Parse the response** the same way (numbers / `all` / `none`). The result is `linked_tickers` — a flat array of symbols, e.g. `["MSFT", "NVDA"]`, each canonicalized with `python3 scripts/symbols.py --check <SYMBOL> ...` before writing (`BRK.B` → `BRK-B`); a symbol `--check` rejects isn't a ticker — ask instead of storing it.
 
 5. **Confirm the entry** — show a one-line summary:
    ```
@@ -112,7 +112,7 @@ Everything the user typed after `/journal` is the **raw reflection** — a seed 
    ```
    Update `last_updated` to today. Write the file. Report: `"Logged to tracking/journal.json (ID: journal-20260622-001)."`
 
-7. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (When regenerated, the entry appears as a violet node in the Timeline view.)
+7. **Dashboard decision** — run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (When regenerated, the entry appears as a violet node in the Timeline view.) Also run `python3 scripts/check_consistency.py --paths tracking/journal.json` — it reports only inconsistencies this run introduced (non-canonical symbols, broken `report_path` links); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so.
 
 8. **Ship gate** — the work is already on the `journal/<YYYY-MM-DD>-<NNN>` branch cut in Step 2. **Show the user** the files that would be committed (`tracking/journal.json`) and the dashboard decision line.
 

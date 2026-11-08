@@ -37,7 +37,7 @@ You receive:
 - An investment hypothesis (verbatim from the director).
 - A list of open questions to investigate.
 - Paths to specific round-1 reports cited in the ticker's origin — **read these first** before doing your own research.
-- The output path: `reports/<run>/tickers/<TICKER>.md` — use the ticker symbol exactly as given, preserving hyphens (e.g. `BRK-B.md`, not `BRKB.md`).
+- The output path: `reports/<run>/tickers/<TICKER>.md` — the director passes the canonical symbol (`scripts/symbols.py`; e.g. `BRK-B`, `000660.KS`); use it exactly as given in every file name (`<TICKER>.md`, `ticker_stats_<TICKER>.json`, `chart_<TICKER>.png`).
 
 Process:
 1. Read the cited round-1 reports.
@@ -101,7 +101,7 @@ You receive:
 
 Process:
 1. Read the cited round-1 reports once (they're shared context for all names).
-2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (symbol exactly as given, hyphens preserved). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block with `structure` (trend, levels, break level, chips, divergences), and the script writes `chart_<TICKER>.png` beside it — open the chart, then let the setup inform the Market verdict and write the **Key levels** block (same rules as Step 3c in ticker sub-mode, at survey depth). **Skip `fetch_13f_breadth.py` in scan mode** — it takes minutes per name and quick runs don't have the budget; the 13F lens belongs to per-ticker deep dives.
+2. For **each** ticker, run `python scripts/fetch_ticker_stats.py <TICKER> reports/<run>/tickers/ticker_stats_<TICKER>.json` (the canonical symbol exactly as given). Cite snapshot values as `(yfinance, <fetched_at date>)`. The JSON also carries a `technicals` block with `structure` (trend, levels, break level, chips, divergences), and the script writes `chart_<TICKER>.png` beside it — open the chart, then let the setup inform the Market verdict and write the **Key levels** block (same rules as Step 3c in ticker sub-mode, at survey depth). **Skip `fetch_13f_breadth.py` in scan mode** — it takes minutes per name and quick runs don't have the budget; the 13F lens belongs to per-ticker deep dives.
 3. For each ticker, do a **capped** search pass — ~3–4 WebSearch/WebFetch operations per name — targeting only what the verdicts need: the load-bearing open question(s) and anything the stats JSON can't answer. This is a survey, not a deep dive; unanswered open questions go in that ticker's Open/unanswered line, not into more searching.
 4. Form both verdicts per ticker (same Thesis/Market separation and horizon lens as ticker sub-mode).
 5. Write one file using the **ticker-scan template** below.

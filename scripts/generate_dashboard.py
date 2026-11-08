@@ -2,7 +2,6 @@
 """Generate dashboard/index.html — research-to-trade performance tracker."""
 
 import json
-import re
 import sys
 import time
 import webbrowser
@@ -13,6 +12,13 @@ ROOT = Path(__file__).parent.parent
 REPORTS_DIR = ROOT / "reports"
 TRACKING_DIR = ROOT / "tracking"
 DASHBOARD_DIR = ROOT / "dashboard"
+
+sys.path.insert(0, str(Path(__file__).parent))
+# Ticker identity and report parsing live in shared modules — one rule for
+# every consumer (see scripts/symbols.py, scripts/research_index.py).
+from symbols import economic_group as _norm_ticker, quote_symbol  # noqa: E402
+from research_index import (  # noqa: E402,F401
+    load_research_runs, parse_run_verdicts, build_verdict_lookup, resolve_run)
 
 
 # ---------------------------------------------------------------------------
@@ -41,123 +47,11 @@ def load_hypotheticals() -> list:
     return data.get("scenarios", [])
 
 
-def _parse_frontmatter(text: str) -> dict:
-    """Parse simple YAML frontmatter (key: value lines only)."""
-    result = {}
-    if not text.startswith("---"):
-        return result
-    end = text.find("---", 3)
-    if end == -1:
-        return result
-    for line in text[3:end].splitlines():
-        if ":" in line:
-            k, _, v = line.partition(":")
-            result[k.strip()] = v.strip().strip('"')
-    return result
-
-
-def load_research_runs() -> list:
-    runs = []
-    if not REPORTS_DIR.exists():
-        return runs
-    for run_dir in sorted(REPORTS_DIR.iterdir()):
-        if not run_dir.is_dir():
-            continue
-        fr = run_dir / "final-report.md"
-        if not fr.exists():
-            continue
-        fm = _parse_frontmatter(fr.read_text())
-        slug = run_dir.name
-        # derive date from directory name (YYYY-MM-DD-slug)
-        m = re.match(r"(\d{4}-\d{2}-\d{2})", slug)
-        run_date = m.group(1) if m else fm.get("date", "")
-        runs.append({
-            "slug": slug,
-            "date": run_date,
-            "question": fm.get("question", slug),
-            "investable": fm.get("investable", "false").lower() == "true",
-        })
-    return runs
-
-
-# Verdicts are read straight from the research reports — no tracking file.
-# Formats accumulated over time, newest first: the final report's verdict
-# table (any table row whose first cell is a ticker and some cell carries a
-# verdict word), per-ticker headings ("### $NVDA — Buy"), and the per-ticker
-# deep dives' "Market verdict" line.
-VERDICT_WORD = re.compile(r"\b(Buy|Hold|Avoid|Accumulate|Sell|Trim|Watch)\b", re.I)
-TABLE_TICKER = re.compile(r"[*$`]*([A-Z0-9][A-Z0-9.\-]{0,7})\b")
-HEADING_VERDICT = re.compile(
-    r"^#{2,4} \$?([A-Z0-9][A-Z0-9.\-]{0,7})\b[^\n]*?[—\-:]\s*(?:Market verdict:?\s*)?\**(Buy|Hold|Avoid)\b", re.M)
-MARKET_VERDICT = re.compile(r"Market verdict\W{0,6}(Buy|Hold|Avoid)\b", re.I)
-# Share classes reported under either symbol.
-TICKER_ALIASES = {"GOOGL": "GOOG", "BRK.B": "BRK-B"}
-
-
-def _norm_ticker(t: str) -> str:
-    return TICKER_ALIASES.get(t, t)
-
-
-def parse_run_verdicts(run_dir: Path) -> dict:
-    """{ticker: Market verdict} for one research run."""
-    out = {}
-    fr = run_dir / "final-report.md"
-    text = fr.read_text() if fr.exists() else ""
-    market_col = None   # index of the header's "Market" column, when the table has one
-    for line in text.splitlines():
-        if not line.startswith("|"):
-            market_col = None
-            continue
-        if set(line) <= set("|-: "):
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        m = TABLE_TICKER.match(cells[0])
-        if not m or not re.search("[A-Z]", m.group(1)) or m.group(1).upper() == "TICKER":
-            if m and m.group(1).upper() == "TICKER":
-                market_col = next((i for i, c in enumerate(cells) if c.lower().startswith("market")), None)
-            continue
-        cols = [cells[market_col]] if market_col is not None and market_col < len(cells) else cells[1:]
-        v = next((VERDICT_WORD.search(c) for c in cols if VERDICT_WORD.search(c)), None)
-        if v:
-            out.setdefault(_norm_ticker(m.group(1)), v.group(1).title())
-    for m in HEADING_VERDICT.finditer(text):
-        out.setdefault(_norm_ticker(m.group(1)), m.group(2).title())
-    for tf in sorted((run_dir / "tickers").glob("*.md")) if (run_dir / "tickers").is_dir() else []:
-        m = MARKET_VERDICT.search(tf.read_text())
-        if m:
-            out.setdefault(_norm_ticker(tf.stem), m.group(1).title())
-    return out
-
-
-def build_verdict_lookup(runs: list) -> dict:
-    """{(ticker, run slug): Market verdict} across every research run."""
-    lookup = {}
-    for r in runs:
-        for ticker, verdict in parse_run_verdicts(REPORTS_DIR / r["slug"]).items():
-            lookup[(ticker, r["slug"])] = verdict
-    return lookup
-
-
-def resolve_run(run: str | None, slugs: set) -> str | None:
-    """A linked run's report dir. Some older links dropped the date prefix."""
-    if not run or run in slugs:
-        return run
-    dated = sorted(s for s in slugs if s[11:] == run)
-    return dated[-1] if dated else run
-
-
 def _link_verdict(link: dict, ticker: str, verdict_lookup: dict | None, slugs: set) -> str | None:
     """The verdict snapshotted on the trade link wins; else read it from the report."""
     if link.get("market_verdict"):
         return link["market_verdict"]
     return (verdict_lookup or {}).get((_norm_ticker(ticker), resolve_run(link.get("run"), slugs)))
-
-
-# Tracking symbols that differ from their Yahoo Finance quote symbol.
-YAHOO_SYMBOL_ALIASES = {
-    "BTC": "BTC-USD",
-    "ETH": "ETH-USD",
-}
 
 
 def fetch_current_prices(tickers: set) -> dict:
@@ -176,7 +70,7 @@ def fetch_current_prices(tickers: set) -> dict:
         headers = {"User-Agent": "Mozilla/5.0"}
         for ticker in tickers:
             try:
-                symbol = YAHOO_SYMBOL_ALIASES.get(ticker, ticker)
+                symbol = quote_symbol(ticker)
                 url = (
                     "https://query1.finance.yahoo.com/v8/finance/chart/"
                     f"{symbol}?range=1d&interval=1d"
@@ -265,7 +159,7 @@ def fetch_price_history(tickers: set, start_date: str) -> dict:
     p2 = int(time.time()) + 86400
     headers = {"User-Agent": "Mozilla/5.0"}
     for ticker in to_fetch:
-        symbol = YAHOO_SYMBOL_ALIASES.get(ticker, ticker)
+        symbol = quote_symbol(ticker)
         url = (
             "https://query1.finance.yahoo.com/v8/finance/chart/"
             f"{symbol}?period1={p1}&period2={p2}&interval=1d"
