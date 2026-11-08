@@ -419,11 +419,14 @@ def _explain(c, ctx, intent):
     if st == "collar":
         K1, Kc = legs[0]["strike"], legs[1]["strike"]
         credit = cost < 0
+        # built outside the f-strings: a backslash inside an f-string expression needs Python 3.12+
+        flat_outcome = (f"a {_d(-cost)} credit" if credit
+                        else f"a {_d(cost)} loss (the put's cost less the little the call brings in)")
         return {
             "headline": f"Buy {n} {tk} ${K1:g} put / sell {n} ${Kc:g} call, expiring {E}, for {'a ~' + _d(-cost) + ' credit' if credit else '~' + _d(cost) + ' net'}",
             "bet": f"You're trading your upside above ${Kc:g} ({_p(Kc/S - 1, True)}) for protection below ${K1:g} ({_p(K1/S - 1, True)}) until {E}; the call you sell pays for the put.",
             "how_you_win": f"{tk} drops below ${K1:g}: the put covers every dollar below it, so the {sh} shares can't lose more than about {_p(c['deductible_pct'] + c['net_cost_pct_of_position'])} through {E}.",
-            "how_you_lose": f"{tk} rallies past ${Kc:g}: your shares are capped there (called away at ${Kc:g}) and you miss the rest. Since you're bullish, that cap is the real cost of this structure; if it ends flat you net {'a ' + _d(-cost) + ' credit' if credit else 'a ' + _d(cost) + ' loss (the put\'s cost less the little the call brings in)'}.",
+            "how_you_lose": f"{tk} rallies past ${Kc:g}: your shares are capped there (called away at ${Kc:g}) and you miss the rest. Since you're bullish, that cap is the real cost of this structure; if it ends flat you net {flat_outcome}.",
             "key_numbers": {"net_cost_total": round(cost), "floor": K1, "cap": Kc},
         }
     if st == "long call":

@@ -151,12 +151,12 @@ git switch main                                       # always finish on main
 Prism lives in two sibling repos:
 
 - **prism-shared** (public) — the engine: `scripts/`, `.claude/agents/`, `.claude/commands/`, `.claude/hooks/` + `.claude/settings.json`, `CLAUDE.md`, `README.md`, `setup.sh`. Canonical home for all feature work. Tracking JSONs are empty templates; `scout-x-feeds.json` holds placeholder handles.
-- **prism** (private) — the daily driver: the same engine **plus** personal data (`reports/`, `scouts/`, `memos/`, real `tracking/*.json`, generated `dashboard/index.html`, real X follows, `.env`).
+- **prism** (private) — the daily driver: the same engine **plus** personal data (`reports/`, `scouts/`, `memos/`, real `tracking/*.json`, generated `dashboard/index.html`, real X follows, `.env`) and `ops/README.md` — the exact recipe of the user's hosted environment and scheduled tasks (names, schedules, prompts; never secret values), kept so either can be recreated in any harness.
 
 **Rules:**
 
 - Engine changes belong in **prism-shared first**, then sync to prism. When a change lands in prism first (it happens — that's where daily work runs), port it back to prism-shared promptly.
-- Engine files should be **byte-identical** across the two repos. The only expected diffs are the `.prism-engine` marker (prism-shared only) and personal data: `tracking/*.json`, `dashboard/index.html`, `.claude/scout-x-feeds.json`, `.claude/settings.local.json`, `.claude/podcast-cast.json`, `.env`, `reports/`, `scouts/`, `memos/`.
+- Engine files should be **byte-identical** across the two repos. The only expected diffs are the `.prism-engine` marker (prism-shared only) and personal data: `tracking/*.json`, `dashboard/index.html`, `.claude/scout-x-feeds.json`, `.claude/settings.local.json`, `.claude/podcast-cast.json`, `.env`, `reports/`, `scouts/`, `memos/`, `ops/`. When the hosted environment or a scheduled task changes, update `ops/README.md` in the same session.
 - **Nothing personal ever enters prism-shared** — no real handles, account numbers, keys, personal paths, or tracking data. prism → prism-shared is a port with sanitization, not a copy.
 - Sync commits reference the source repo's PR (`sync: <what> from prism (#N)`), so direction and provenance are recoverable from history.
 - `/sync` (`.claude/commands/sync.md`) automates the whole flow: diffs the engine set, infers direction from git history, sanitizes, and lands a PR in the receiving repo per the Git convention.

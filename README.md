@@ -16,7 +16,7 @@ Prism runs inside Claude Code. One-time setup:
    ```
    cp .env.example .env
    ```
-2. **Run the setup script** — installs Python deps (`yfinance`), checks for `ffmpeg` / `gh`, and verifies every environment variable and settings file below (it loads `.env`, so it sees values configured there). Safe to re-run.
+2. **Run the setup script** — checks that `python3` is Python 3.10+ and that every script compiles on it, installs the Python deps (`yfinance`, `matplotlib`) **into `python3`** — the interpreter every command runs — checks for `ffmpeg` / `gh`, and verifies every environment variable and settings file below (it loads `.env`, so it sees values configured there). Safe to re-run. To use a different interpreter, set `PRISM_PYTHON=/path/to/python3.x` (then make sure the commands' `python3` resolves to the same one).
    ```
    bash setup.sh
    ```
@@ -34,7 +34,22 @@ Prism runs inside Claude Code. One-time setup:
 
 - **`.claude/scout-x-feeds.json`** — the curated X accounts `/scout` pulls from (`handles[]`, optional `topics` / `note` per account). Ships as an example template; edit it with accounts you actually follow. Only used when `X_BEARER_TOKEN` is set; harmless to leave as the template otherwise.
 
-**System tools:** `ffmpeg` (podcast audio stitching), `gh` (PR creation), `python3`. `setup.sh` checks for these.
+**System tools:** `ffmpeg` (podcast audio stitching), `gh` (PR creation), `python3` ≥ 3.10. `setup.sh` checks for these.
+
+### Recreating the environment (Claude Code on the web, or any other harness)
+
+Everything an environment needs is in this repo; nothing lives only in a settings page. To stand one up:
+
+1. **Repositories** — check out the private repo (and, if you work on the engine, the public `prism-shared` beside it).
+2. **Setup script** — have the environment run the repo's own script, so the two never drift:
+   ```bash
+   if [ -d prism ]; then bash prism/setup.sh || echo "prism setup reported a problem"; fi
+   ```
+   (Claude Code cloud environments start the setup script in the directory that holds the checkouts; adjust the path for other harnesses. Don't paste a copy of `setup.sh` into the environment — it goes stale.)
+3. **Variables / secrets** — the names in the table above. Values never go in the repo; `.env` is gitignored. In a hosted environment, prefer its secret store for keys over plain environment variables.
+4. **Network** — unrestricted is simplest. A restricted allowlist needs (from the code): `api.snaptrade.com`, `query1.finance.yahoo.com`, `query2.finance.yahoo.com`, `fc.yahoo.com` (yfinance), `api.gdeltproject.org`, `hn.algolia.com`, `efts.sec.gov`, `www.sec.gov`, `data.sec.gov`, `api.x.com`, `api.openai.com`, plus package registries (PyPI) and GitHub. Web research also uses search/fetch tools, which reach arbitrary sites.
+5. **Scheduled runs** — a scheduled task is just a prompt that invokes a command (e.g. `/sync-portfolio and ship it`, `/options-watch`); the private repo keeps the exact list (name, schedule, prompt) in `ops/README.md` so it can be recreated anywhere.
+6. **Verify** — run `bash setup.sh` in the new environment; every line should be `[ok]` or `[--]` (optional).
 
 ---
 
