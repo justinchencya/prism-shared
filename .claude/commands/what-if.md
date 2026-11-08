@@ -46,6 +46,8 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    ```
    If the branch step fails, report and stop. Everything below happens on this branch.
 
+   **Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `what-if: <scenario name, or the management action + name>`. Do it whatever language the input was in. If the tool isn't available (e.g. a local CLI session), skip it silently. The ship gate re-checks this (see **Session title** in `CLAUDE.md`).
+
 5. **Write and preview** — append the scenario to `tracking/hypotheticals.json` (initialize the file as `{ "last_updated": "<today>", "scenarios": [] }` if missing), set `status: "active"`, update `last_updated`. Then run the preview:
 
    ```bash
@@ -56,7 +58,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    - If it prints warnings (e.g. `no price history` — likely a bad or delisted ticker), surface them and ask whether to fix the scenario (edit the JSON and re-preview) or abandon (take the decline path in step 6).
    - If the count of active scenarios is now above 4, note that the chart palette has 4 slots so colors will repeat, and suggest archiving an old scenario.
 
-6. **Ship gate** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Run `python3 scripts/dashboard_due.py` and keep its one-line decision. Also run `python3 scripts/check_consistency.py --paths tracking/hypotheticals.json` — it reports only inconsistencies this run introduced (non-canonical symbols, broken `report_path` links); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so. Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this what-if scenario?", and three options in this order:
+6. **Ship gate** — **Session-title check first:** if the session-title step above didn't run and the tool is available, run it now — the title must be set before the gate is shown. Show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Run `python3 scripts/dashboard_due.py` and keep its one-line decision. Also run `python3 scripts/check_consistency.py --paths tracking/hypotheticals.json` — it reports only inconsistencies this run introduced (non-canonical symbols, broken `report_path` links); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so. Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this what-if scenario?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"

@@ -23,6 +23,8 @@ git switch -c podcast/<run-dir-basename>
 
 If `final-report.md` isn't present on `main`, bail with that message **before cutting the branch** — don't proceed. (Its research PR must be merged first; otherwise the podcast files would have no report to attach to.) If the switch, pull, or branch fails, report and stop.
 
+**Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `podcast: <run-dir-basename>`. Do it whatever language the input was in. If the tool isn't available (e.g. a local CLI session), skip it silently. The ship gate re-checks this (see **Session title** in `CLAUDE.md`).
+
 Verify `OPENAI_API_KEY` is available before dispatching — either in the shell env or in `<repo-root>/.env` (a line like `OPENAI_API_KEY=sk-...`):
 
 ```bash
@@ -43,7 +45,7 @@ After the producer reports `episode.mp3` is written, commit the podcast and open
 
 1. **Show the user** the files that would be committed (`episode.mp3`, `episode.json`, `script.md`, `outline.md` under `reports/<run-dir>/podcast/`), using `git status --short` or a plain file listing.
 
-2. **Ship gate** (per **Git convention** in `CLAUDE.md`) — a single `AskUserQuestion` call with **one** question, "Ship this podcast episode?", and three options in this order:
+2. **Ship gate** (per **Git convention** in `CLAUDE.md`) — **Session-title check first:** if the session-title step above didn't run and the tool is available, run it now — the title must be set before the gate is shown. Then a single `AskUserQuestion` call with **one** question, "Ship this podcast episode?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"

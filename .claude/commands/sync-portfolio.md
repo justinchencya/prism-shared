@@ -15,6 +15,8 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 
 1. **Detect mode** — check for the credentials *without* printing them: look for non-empty `SNAPTRADE_CLIENT_ID` and `SNAPTRADE_CONSUMER_KEY` in the environment, else as assignments in `<repo-root>/.env` (e.g. `grep -c '^SNAPTRADE_CLIENT_ID=..*' .env`). Never echo, cat, or log the key values. Both present → sync mode (continue with Step 2). Either missing → review-only mode (skip to Step 5, prefixing the review with the staleness warning).
 
+   **Set the session title — required, now, before any other work.** If a `set_session_title` tool is available (cloud sessions; it may be named `mcp__claude-code-remote__set_session_title`), call `get_session` with no `session_id` to get this session's id, then `set_session_title` with the title `sync-portfolio: <YYYY-MM-DD>`. Do it whatever language the input was in. If the tool isn't available (e.g. a local CLI session), skip it silently. The ship gate re-checks this (see **Session title** in `CLAUDE.md`). This applies in both modes — review-only runs have no branch or ship gate, so do it here.
+
 2. **Sync with main and cut the branch** — per the **Git convention** in `CLAUDE.md`, before any work:
    - **Engine-repo guard**: if `.prism-engine` exists at the repo root, stop — this is the public engine repo; tell the user to run `/sync-portfolio` in their private daily-driver repo.
    - **Clean-tree guard**: `git status --porcelain` — any unrelated changes → stop and report; never stash or sweep them in.
@@ -55,7 +57,7 @@ The SnapTrade Fidelity integration is **read-only** (no trade placement); this c
 
    In review-only mode Steps 4–5 run against the committed snapshot; nothing is written.
 
-6. **Ship gate** (sync mode only) — **show the user** the files to be committed: `tracking/brokerage-snapshot.json` and `tracking/ledger.json`. The ledger is a dashboard input, so run `python3 scripts/dashboard_due.py` and keep its one-line decision (per **Git convention** in `CLAUDE.md`). Run `python3 scripts/check_consistency.py --paths tracking/brokerage-snapshot.json tracking/ledger.json`; if it exits 1, show its output with the ship gate (a fetcher bug, not something to patch in the data).
+6. **Ship gate** (sync mode only) — **Session-title check first:** if the session-title step above didn't run and the tool is available, run it now — the title must be set before the gate is shown. **Show the user** the files to be committed: `tracking/brokerage-snapshot.json` and `tracking/ledger.json`. The ledger is a dashboard input, so run `python3 scripts/dashboard_due.py` and keep its one-line decision (per **Git convention** in `CLAUDE.md`). Run `python3 scripts/check_consistency.py --paths tracking/brokerage-snapshot.json tracking/ledger.json`; if it exits 1, show its output with the ship gate (a fetcher bug, not something to patch in the data).
 
    Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this portfolio sync?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
