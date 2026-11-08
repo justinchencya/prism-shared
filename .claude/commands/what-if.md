@@ -32,6 +32,8 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    - **`benchmark`** — "what if I'd put the same money into SPY/QQQ/…" → `benchmark_ticker`. Every actual trade is re-executed into that one ticker, same dates and amounts.
    - **`standalone`** — an explicit hypothetical trade list with no reference to the actual log. Expand recurring phrasings ("$500/month into QQQ since March") into explicit dated trades — one per period on the same day-of-month (clamped to month end), absolute dates, each `{ date, ticker, action, amount_usd }`. Do **not** compute shares or prices — the dashboard script derives them from daily closes.
 
+   Every ticker the scenario stores (`overrides[].from` / `.to` / `.ticker`, `benchmark_ticker`, `trades[].ticker`) is canonicalized with `python3 scripts/symbols.py --check <SYMBOL> ...` first (`BRK.B` → `BRK-B`); one `--check` rejects isn't a quote symbol — ask for the real ticker.
+
    **Derive a short display name** from the scenario (e.g. `"AMD instead of NVDA (2026-03-02)"`, `"SPY benchmark"`, `"QQQ DCA $500/mo"`) and confirm it with the user along with a one-line restatement of what will be simulated. This name is what the chart legend shows — keep it under ~40 chars.
 
 4. **Compute the ID, color, and branch — then cut the branch** (per the **Git convention** in `CLAUDE.md`):
@@ -54,7 +56,7 @@ Everything the user typed after `/what-if` is either a **new scenario descriptio
    - If it prints warnings (e.g. `no price history` — likely a bad or delisted ticker), surface them and ask whether to fix the scenario (edit the JSON and re-preview) or abandon (take the decline path in step 6).
    - If the count of active scenarios is now above 4, note that the chart palette has 4 slots so colors will repeat, and suggest archiving an old scenario.
 
-6. **Ship gate** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Run `python3 scripts/dashboard_due.py` and keep its one-line decision. Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this what-if scenario?", and three options in this order:
+6. **Ship gate** — show the user the file(s) to be committed (`tracking/hypotheticals.json`; `dashboard/index.html` only if regenerated). Run `python3 scripts/dashboard_due.py` and keep its one-line decision. Also run `python3 scripts/check_consistency.py --paths tracking/hypotheticals.json` — it reports only inconsistencies this run introduced (non-canonical symbols, broken `report_path` links); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so. Ask the **ship gate** (per **Git convention** in `CLAUDE.md`): a single `AskUserQuestion` call with **one** question, "Ship this what-if scenario?", and three options in this order:
    - "Ship it — commit, push, open PR, merge" (Recommended)
    - "Commit, push & open PR — leave it open"
    - "Don't commit"

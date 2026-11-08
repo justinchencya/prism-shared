@@ -39,6 +39,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from symbols import canonical  # noqa: E402
+
 # SEC EDGAR requires a contact email in the User-Agent. Read it from the env so
 # the engine carries no personal address; falls back to a generic placeholder.
 UA = f"Prism researcher ({os.environ.get('EDGAR_CONTACT_EMAIL', 'prism-user@example.com')})"
@@ -443,7 +446,7 @@ def main() -> None:
         print("usage: fetch_ticker_stats.py <TICKER> <output-path>", file=sys.stderr)
         sys.exit(1)
 
-    ticker = sys.argv[1].strip().upper()
+    ticker = canonical(sys.argv[1])
     out_path = Path(sys.argv[2]).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 

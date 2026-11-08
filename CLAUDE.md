@@ -199,6 +199,13 @@ tracking/
   brokerage-snapshot.json # real brokerage state (accounts/positions/options/activity) from SnapTrade via /sync-portfolio — source of truth for holdings
 ```
 
+**Symbols & reconciliation** — one rule each, in code, shared by every consumer; commands call the scripts instead of re-deriving the rule in prose:
+
+- **Ticker identity** — `scripts/symbols.py`. Canonical = the Yahoo Finance spelling (`BRK-B`, `000660.KS`; crypto stays `BTC`, quoted as `BTC-USD`). Normalize at write boundaries (SnapTrade fetch keeps the broker's spelling as `raw_symbol`; `/log-trade`, `/journal`, `/what-if`, research dispatch run `python3 scripts/symbols.py --check <SYM>`); readers canonicalize both sides, so legacy spellings on disk keep working — **no backfills, no renames**. `canonical()` fixes spelling only; `economic_group()` (GOOGL → GOOG) is the deliberate share-class merge for research coverage and the dashboard, never for trade matching.
+- **Research coverage + verdicts** — `scripts/research_index.py <TICKER>...` (used by the dashboard, `/sync-portfolio`, `/log-trade`, `/journal`).
+- **Trade log vs brokerage** — `scripts/reconcile_trades.py` (canonical symbol, direction, trading-day date window, price-first, quantity-aware; read-only).
+- **Consistency** — `scripts/check_consistency.py` reports (never fixes) non-canonical symbols, non-symbol ticker files, broken `report_path` links. Full scan = informational (legacy is tolerated); `--paths` = only what this run introduced vs git HEAD — every data-writing command runs it before its ship gate.
+
 **Research lives in `reports/`, not in tracking.** There is no per-ticker thesis store, watchlist, or event tracker. Anything that needs a ticker's research history (the dashboard, `/log-trade` and `/journal` run suggestions, `/sync-portfolio`'s held-without-research and stale-research checks) reads it from the reports themselves: a run covered a ticker if `tickers/<TICKER>.md` exists or its `final-report.md` mentions `$<TICKER>`, and its Market verdict comes from the verdict table (or the `### $TICKER — <verdict>` heading, or the ticker file's `**Market verdict:**` line). `brokerage-snapshot.json` is the **source of truth for what's held** (positions, shares, cost, cash, P&L); `[PORTFOLIO]` badges everywhere come from the `symbol` values across its `accounts[].positions[]`.
 
 (`tracking/price-cache.json` may also exist — a gitignored daily-close cache written by `scripts/generate_dashboard.py`, refetched whole per ticker per day. Never committed.)

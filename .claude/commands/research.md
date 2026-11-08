@@ -59,7 +59,7 @@ After the director's Phase 8 report-back (final report path, verdict table, etc.
 
    **Then show the charts** (investable runs): for each `reports/<id>/tickers/chart_<TICKER>.png`, send the image to the user with whatever file-sharing tool the session has (e.g. `SendUserFile`, rendered inline), captioned with the ticker, its Market verdict, and its key levels line from the verdict table — one call for all charts. If no such tool exists, list the chart paths instead.
 
-1. **Dashboard decision** — the run added a report, a dashboard input. Run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (Rule in `CLAUDE.md` → **Git convention**: once per trading day, after the 13:00 PT close.)
+1. **Dashboard decision** — the run added a report, a dashboard input. Run `python3 scripts/dashboard_due.py` from the repo root and keep its one-line output (`regenerate: …` / `skip: …`); don't regenerate yet. (Rule in `CLAUDE.md` → **Git convention**: once per trading day, after the 13:00 PT close.) Also run `python3 scripts/check_consistency.py --paths reports/<id>` — it reports only inconsistencies this run introduced (non-canonical symbols, ticker files not named by a quote symbol); if it exits 1, show its output with the ship gate and in its preview. Don't patch around it — fix the entry the run wrote, or ship it as-is if the user says so.
 
 2. **Show the user** the list of files that would be committed (`reports/<id>/`), using `git status --short` or a plain file listing, plus the dashboard decision line.
 

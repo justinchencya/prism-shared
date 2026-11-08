@@ -167,7 +167,8 @@ Written by `scripts/fetch_snaptrade.py` (invoked by `/sync-portfolio`). One whol
           "currency": "USD",
           "average_purchase_price": 180.2,
           "open_pnl": 399.6,
-          "cash_equivalent": false
+          "cash_equivalent": false,
+          "raw_symbol": "NVDA"
         }
       ],
       "activities": [
@@ -175,6 +176,7 @@ Written by `scripts/fetch_snaptrade.py` (invoked by `/sync-portfolio`). One whol
           "date": "2026-07-01",
           "type": "BUY",
           "symbol": "NVDA",
+          "raw_symbol": "NVDA",
           "units": 2.0,
           "price": 213.5,
           "amount": -427.0,
@@ -194,6 +196,8 @@ Notes:
 - Account numbers are masked to the last 4 digits before hitting disk; the full number is never stored.
 - `activities` covers only the trailing `lookback_days` window (default 90) — it is a reconciliation aid for `trades.json`, not a full trade history.
 - Positions are sorted by market value descending; activities by date descending.
+- `symbol` (and options' `underlying`) is canonical (`scripts/symbols.py` — Fidelity's `BRKB` is stored as `BRK-B`); the broker's own spelling is kept as `raw_symbol` / `raw_underlying`. Snapshots from before this change have no `raw_*` fields and may hold broker spellings — readers canonicalize, so they still work.
+- Activity `date` is the broker's date, which for Fidelity is the posting date (up to a trading day after the trade). `scripts/reconcile_trades.py` accounts for that when matching against `trades.json`.
 - **`balance.cash` is derived, not SnapTrade's cash line.** Fidelity's core-sweep (SPAXX) units — reported both as the `cash_equivalent: true` position and as `/balances` cash — can lag the account's real cash by thousands, while `total` and security prices are current. So `cash` = `total` − non-cash-equivalent positions − net options value: the actual cash holdings (Fidelity's "Cash and credits"), **including** cash reserved as option collateral. `cash_breakdown` splits it: `collateral_reserved` = Σ short puts strike × multiplier × contracts; `free` = SnapTrade `buying_power` (settled, unreserved — Fidelity's "Available to trade"). `cash_check` cross-validates (`free + collateral_reserved` must equal `cash` within $1; `agree: false` → a snapshot warning, `cash` keeps the first method) and records `reported_lag` = `cash_reported` − `cash`. The cash-equivalent position's own `market_value` carries the lagged figure. Snapshots from before this change lack these fields — their `cash` is the raw SnapTrade line.
 - `warnings[]` records sub-endpoint failures (e.g. one account's activities endpoint down) — the snapshot is still valid, just partial.
 
