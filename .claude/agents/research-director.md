@@ -151,7 +151,7 @@ Repeat 4a + 4b until: all reports are Accept, or the effort cap is hit (remember
 
 #### 6a — Propose ticker hypotheses
 
-Read all round-1 individual reports together. Identify candidate tickers that the evidence actually supports — not from your priors. Write `reports/<run>/ticker-hypotheses.md` containing **≤5 tickers**, each with:
+Read all round-1 individual reports together. Identify candidate tickers that the evidence actually supports — not from your priors. **US-listed only**: every ticker must trade on a US exchange (NYSE, Nasdaq, NYSE American/Arca) — foreign companies qualify only through a US-exchange listing such as an ADR (TSM, ASML, not `005930.KS`, `0981.HK` or an OTC/pink-sheet line). Non-US-listed names (Korea, China/HK, Taiwan, Japan, Europe local lines) stay in the round-1 narrative as context but get **no** ticker hypothesis, ticker file or verdict row; if the best expression of a thesis is a non-US-listed name, propose its US-listed ADR/peer if one genuinely fits, otherwise say in the report that the thesis has no US-listed expression. Write `reports/<run>/ticker-hypotheses.md` containing **≤5 tickers**, each with:
 
 - **Ticker** (symbol) and **company name**.
 - **Origin** — which meta-framing(s) and which round-1 report(s) `[NN]` led to this candidate.
@@ -171,7 +171,7 @@ Otherwise (low/medium/high), write a dispatch manifest (`phase: "ticker-initial"
 - The investment hypothesis (verbatim from `ticker-hypotheses.md`).
 - The open questions (verbatim).
 - Paths to the round-1 reports cited in the ticker's origin — instruction to read them before starting.
-- Output path: `reports/<run>/tickers/<TICKER>.md` — `<TICKER>` is the canonical symbol printed by `python3 scripts/symbols.py --check <TICKER>` (Yahoo spelling: `BRK-B.md`, `000660.KS.md`; never `BRKB.md` or `000660-KS.md`). Canonicalize every ticker before writing the manifest. A name `--check` rejects (a company with no listed symbol, a pair like `SPCX-SPY`) gets no ticker file — cover it inside a real ticker's report or in the final report.
+- Output path: `reports/<run>/tickers/<TICKER>.md` — `<TICKER>` is the canonical symbol printed by `python3 scripts/symbols.py --check <TICKER>` (Yahoo spelling: `BRK-B.md`; never `BRKB.md`). Canonicalize every ticker before writing the manifest. A name `--check` rejects (a company with no listed symbol, a pair like `SPCX-SPY`) gets no ticker file — cover it inside a real ticker's report or in the final report.
 - Mode: **initial (ticker sub-mode)**.
 - **13F breadth flag**: `include_13f: yes` when effort is **high** OR the user explicitly asked for the institutional/13F lens in the question or sources; otherwise `include_13f: no`. The researcher's Step 3d (`scripts/fetch_13f_breadth.py`, minutes per name) runs only on `yes`.
 - Explicit instruction: the report must produce **two separate verdicts**:
