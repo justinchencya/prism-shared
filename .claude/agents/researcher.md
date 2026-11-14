@@ -37,7 +37,7 @@ You receive:
 - An investment hypothesis (verbatim from the director).
 - A list of open questions to investigate.
 - Paths to specific round-1 reports cited in the ticker's origin — **read these first** before doing your own research.
-- The output path: `reports/<run>/tickers/<TICKER>.md` — the director passes the canonical symbol (`scripts/symbols.py`; e.g. `BRK-B`, `000660.KS`); use it exactly as given in every file name (`<TICKER>.md`, `ticker_stats_<TICKER>.json`, `chart_<TICKER>.png`).
+- The output path: `reports/<run>/tickers/<TICKER>.md` — the director passes the canonical symbol (`scripts/symbols.py`; e.g. `BRK-B`); use it exactly as given in every file name (`<TICKER>.md`, `ticker_stats_<TICKER>.json`, `chart_<TICKER>.png`).
 
 Process:
 1. Read the cited round-1 reports.
