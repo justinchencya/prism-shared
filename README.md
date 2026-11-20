@@ -110,7 +110,7 @@ Refracts the question into sub-questions, researches them in parallel, iterates 
 2. Layer-2 items are grouped into 3–8 bundles; one researcher per bundle runs in parallel.
 3. Director critiques all reports and the command re-dispatches revisions on its behalf. Rounds: `quick`=0 (no critique pass), `low`=1, `medium`=2, `high`=4 (upper bounds — director may stop earlier).
 4. If the question implies investable output, a second pass runs per-ticker deep dives with explicit **Thesis verdict** (does the hypothesis hold?) and **Market verdict** (Buy / Hold / Avoid on the horizon the question implies — multi-year by default). Two verdicts per ticker is deliberate — being right about the trend and being right about the trade are different problems.
-   The Market verdict weighs valuation *and* the technical setup — trend, chip distribution (where holders' cost basis clusters), bearish/bullish divergences, support/resistance — read from an annotated K-line chart (`tickers/chart_<TICKER>.png`) the researcher also checks visually. Every ticker gets **key levels**: add zone, reclaim, break (no new buys below it; exit if held as a trade), and overhead, each with why it's real. They show in the ticker report, the final report, and the verdict table. To check one name on its own: `python3 scripts/technical_structure.py AVGO --chart avgo.png`.
+   The Market verdict weighs valuation *and* the technical setup — trend, chip distribution (where holders' cost basis clusters), bearish/bullish divergences, support/resistance — read from an annotated K-line chart (`tickers/chart_<TICKER>.png`) the researcher also checks visually. Every ticker gets **key levels**: add zone, reclaim, break (no new buys below it; exit if held as a trade), and overhead, each with why it's real. They show in the ticker report, the final report, and the verdict table. In a falling market a **Buy** needs a confirmed bottoming pattern (止跌形态) at a level — the same entry gate `/technical-analysis` uses (see **Technical analysis**). To check one name on its own: `/technical-analysis AVGO`, or `python3 scripts/technical_structure.py AVGO --chart avgo.png`.
 5. Director synthesizes a final report as a graph: connections, contradictions, cascades.
 
 Effort defaults to `quick` (no prompt) — pass `effort:low|medium|high` for a deeper run. `quick` is the fast high-level mode: 2–3 bundles at survey depth, no `critiques/` artifacts, and one combined ticker scan (`tickers/ticker-scan.md`) instead of per-ticker deep dives — you still get meta-trends, theses, and the verdict table, in a fraction of the time.
@@ -287,7 +287,40 @@ Both are **read-only** — no orders, no files, no git. Option fills land in the
 
 ---
 
-The eight commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, sync the trade you made, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
+## Technical analysis
+
+```
+/technical-analysis <tickers | held> [intent]
+```
+
+**`/technical-analysis`** reads the chart in both directions for each name — read-only (no files, no branch): **should I add, and where?** (Add now / Wait with the trigger / No), **is my position topping?** (Trim / Watch / Don't chase / Broken / Hold), **is now a good time to sell a covered call or a put, and at what strike?**, and **is there a swing trade** (long or short, with entry, stop, target and reward:risk). It runs the same engine `/research` uses for the setup half of its Market verdicts:
+
+- **Bottoming patterns (止跌形态)** — hammer, bullish engulfing, morning star, capitulation volume, double bottom, base breakout — each tied to the level it formed at, with a **trigger** (the close that confirms it), a **stop** (the low that voids it) and a status (confirmed / pending / expired / failed).
+- **Topping patterns** — shooting star, bearish engulfing, evening star, buying climax, double top, top breakdown — the exact mirror of the bottoming rules (run on price-negated bars), with the close that confirms the top and the high that voids it. Plus **stretch** (RSI, distance from the 20/50-day in ATRs, Bollinger %b, squeeze).
+- **Sell side** — a confirmed top at resistance → *Trim* (on a bounce if price already ran far below the trigger); a pending one → *Watch*; stretched or pressing resistance → *Don't chase*. Core holdings are never sold on the chart alone — for them it means pause adds and sell calls into strength.
+- **Options timing** — covered calls are favorable into strength / a top / resistance and unfavorable into an oversold low; cash-secured puts are favorable after a confirmed bottom at support and unfavorable in a falling market with no bottom — each with a strike guide from the level map (`/options` then picks the contract).
+- **Swing plans** — long and short, with entry, stop, targets from the level map, and reward:risk.
+- **The rule:** in a falling market it says *Add now* only on a **confirmed** bottoming pattern at a real level (≥2 kinds of evidence within one day's range, or the 200-day). A forming pattern is a trigger to wait for, never a buy.
+- **Market gate** — SPY's own setup. While SPY is falling below its 200-day with no confirmed bottom, single-name adds wait; index funds follow your plan's dip rules.
+- **Spacing** — minimum gap between buys = 2.5 × the name's 1-year average daily range (≈3% SPY, ≈4–5% QQQ, ≈9% TSM/NVDA, ≈14% AMD at 2026 volatility), checked against your last fill in the ledger.
+- Your plan in `journal.json` (targets, "no more buys" names) and upcoming earnings can only make a call more cautious.
+
+Examples:
+
+```
+/technical-analysis NVDA TSM AMD
+/technical-analysis held — anything to trim?
+/technical-analysis NVDA — is 175 a good add?
+/technical-analysis QQQ — good week to sell puts?
+```
+
+Standalone: `python3 scripts/technical_structure.py NVDA TSM --chart-dir charts/ --ledger tracking/ledger.json`.
+
+**Backtest** — `python3 scripts/backtest_technical.py NVDA AMD SPY --years 3` replays the engine day by day on the history it would have seen and reports how each signal actually did: forward returns vs baseline per entry/exit signal, how often the suggested covered-call / put strike would have expired worthless vs a random strike at the same distance, and swing win rate / average R.
+
+---
+
+The nine commands are independent — none assumes another ran first. You can chain them (scout a theme, research a candidate it surfaced, podcast the result, sync the trade you made, journal the second-guessing, what-if the road not taken), but nothing forces that order. Each run lands on its own branch and Pull Request off up-to-date `main`; you're prompted once — *ship it* (commit + push + PR + merge), *open PR only*, or *don't commit* — before anything is committed, pushed, or merged. Dashboard regeneration isn't a prompt: commands that change a dashboard input regenerate it once per trading day after the 1 pm PT close (`scripts/dashboard_due.py`), otherwise leave it as-is.
 
 ---
 

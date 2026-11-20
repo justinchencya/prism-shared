@@ -162,7 +162,13 @@ def base_out(ctx, intent, extra=None):
          "supports": [x["price"] for x in lv.get("supports", [])[:3]],
          "resistances": [x["price"] for x in lv.get("resistances", [])[:3]],
          "shares_held": ctx.view["shares"].get(ctx.tk, 0), "snapshot_fetched_at": ctx.view["fetched_at"],
-         "held_options_on_name": ctx.held_options, "warnings": []}
+         "held_options_on_name": ctx.held_options,
+         # chart timing from technical_structure (same engine as /technical-analysis): cc/csp favorable/neutral/
+         # unfavorable + strike guide, and the entry / exit setups behind it
+         "chart_timing": (ctx.struct.get("options_timing") or {}).get(intent),
+         "entry_setup": (ctx.struct.get("setup") or {}).get("signal"),
+         "exit_setup": (ctx.struct.get("exit_setup") or {}).get("signal"),
+         "stretch": (ctx.struct.get("stretch") or {}).get("state"), "warnings": []}
     o.update(extra or {})
     return o
 

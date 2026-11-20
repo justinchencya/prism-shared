@@ -15,7 +15,9 @@ Writes:
                     relative strength vs SPY, volume trend, 52-week position,
                     plus `structure` — chart structure from scripts/technical_structure.py
                     (trend/swings, MACD, divergences, chip distribution, volume
-                    profile, anchored VWAPs, support/resistance, break level)
+                    profile, anchored VWAPs, support/resistance, break level,
+                    bottoming patterns, the entry `setup` signal, the SPY `gate`,
+                    and buy `spacing` vs the last fill in tracking/ledger.json)
   chart_<TICKER>.png  annotated daily K-line chart, written next to <output-path>
     edgar_cross_check — annual revenue from EDGAR 10-K filings (sanity check)
 
@@ -369,9 +371,16 @@ def fetch_technicals(t, ticker: str, notes: list, float_shares=None, chart_path=
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import technical_structure as ts
 
-            structure, s_notes = ts.analyze(hist, float_shares)
+            structure, s_notes = ts.analyze(hist, float_shares, gate=ts.spy_gate(), ticker=ticker)
             notes.extend(s_notes)
             if structure:
+                try:
+                    df_ = hist[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["High", "Low", "Close"])
+                    ledger_path = Path(__file__).resolve().parent.parent / "tracking" / "ledger.json"
+                    trades = ts._load_trades(ledger_path) if ledger_path.exists() else None
+                    structure["spacing"] = ts.spacing_block(df_, ticker, trades)
+                except Exception as e:
+                    notes.append(f"technicals.spacing: {e}")
                 tech["structure"] = structure
                 if chart_path:
                     try:
