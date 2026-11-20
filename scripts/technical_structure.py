@@ -6,7 +6,7 @@ talks about, computed from free yfinance daily OHLCV (pandas/numpy only).
 Usage:
   technical_structure.py <TICKER> [--out <path.json>] [--chart <path.png>]   # prints a readable summary
   technical_structure.py <TICKER> [<TICKER> ...] [--chart-dir <dir>] [--json] [--no-gate]
-                                   [--ledger tracking/ledger.json]           # several names; /ta uses this
+                                   [--ledger tracking/ledger.json]           # several names; /technical-analysis uses this
   (also imported by fetch_ticker_stats.py → technicals.structure)
 
 Blocks:
@@ -29,6 +29,18 @@ Blocks:
                  bottom, base breakout — each with the level it formed at, a
                  confirmation price (trigger), an invalidation price (stop) and a
                  status: confirmed / pending / expired / failed
+  tops         — the mirror image: topping patterns in the last 20 sessions —
+                 shooting star, bearish engulfing, evening star, buying climax,
+                 double top, top breakdown (distribution) — trigger = the close
+                 below which the top confirms, stop = the high that voids it
+  stretch      — overbought / oversold: RSI14, ATRs from the 20/50-day, Bollinger
+                 %b, and a volatility squeeze flag
+  exit_setup   — sell side for a held position: trim / trim_on_bounce / watch_top /
+                 extended / at_resistance / broken / hold, with trigger,
+                 invalidation and a trailing stop
+  options_timing — covered-call and cash-secured-put timing (favorable / neutral /
+                 unfavorable) with a strike guide from the level map
+  swing        — long and short (bearish) swing plans: entry, stop, targets, R:R
   setup        — the entry gate every Market verdict leans on: regime (falling /
                  range / rising) → signal. In a falling regime the only "add" is a
                  confirmed bottoming pattern at a confluent level; otherwise wait.
@@ -406,7 +418,10 @@ def _raw_levels(df, trend, chips, vp, avwap, with_mas=True):
     if vp:
         for k in ("poc", "value_area_low", "value_area_high"):
             raw.append((vp[k], f"volume_profile:{k}"))
+    recent_dates = {_date(ts) for ts in df.index[-3:]}
     for k, v in (avwap or {}).items():
+        if v.get("anchor_date") in recent_dates:   # anchored at the last few bars = today's price, not a level
+            continue
         raw.append((v["vwap"], f"anchored_vwap:{k}"))
     raw.append((float(recent["Low"].min()), "52w_low"))
     raw.append((float(recent["High"].max()), "52w_high"))
@@ -478,14 +493,15 @@ def recent_breaks(df, trend):
 
 # ── bottoming patterns (止跌形态) ──────────────────────────────────────────────
 
-def _level_at(price, i, df, base_levels, atr_i):
-    """The confluent level a pattern low at bar i sits on (within LEVEL_ATR × ATR), or None.
-    Non-MA levels come from base_levels; MAs are taken as of bar i (no look-ahead)."""
+def _level_at(price, i, df, base_levels, atr_i, own_anchor="anchored_vwap:from_52w_low"):
+    """The confluent level a pattern extreme at bar i sits on (within LEVEL_ATR × ATR), or None.
+    Non-MA levels come from base_levels; MAs are taken as of bar i (no look-ahead).
+    Works on mirrored (negated) prices too — see reversals_block(side="top")."""
     # Swings that form during or after the pattern are the pattern itself, not a level it held.
-    # The 52-week low and the AVWAP anchored there are usually the pattern's own low — skip them.
+    # The 52-week extreme and the AVWAP anchored there are usually the pattern's own extreme — skip them.
     cutoff = _date(df.index[max(0, i - 5)])
     raw = [r for r in base_levels
-           if not r[1].startswith(("52w_", "anchored_vwap:from_52w_low"))
+           if not r[1].startswith(("52w_", own_anchor))
            and not (":" in r[1] and r[1].split(":", 1)[1][:4].isdigit() and r[1].split(":", 1)[1] >= cutoff)]
     close = df["Close"]
     for n in (50, 100, 200):
@@ -523,7 +539,28 @@ def _status(df, i, trigger, stop, confirm_window=CONFIRM_WINDOW, already=False):
     return "pending", None, None
 
 
-def reversals_block(df, base_levels, divs):
+TOP_NAMES = {"hammer": "shooting_star", "bullish_engulfing": "bearish_engulfing", "morning_star": "evening_star",
+             "capitulation": "buying_climax", "double_bottom": "double_top", "base_breakout": "top_breakdown"}
+
+
+def _mirror(df):
+    """Price-negated copy: a top in df is a bottom in _mirror(df). Volume and ATR are unchanged."""
+    m = df.copy()
+    m["Open"], m["Close"], m["High"], m["Low"] = -df["Open"], -df["Close"], -df["Low"], -df["High"]
+    return m
+
+
+def reversals_block(df, base_levels, divs, side="bottom"):
+    """Bottoming patterns (side="bottom") or their mirror-image topping patterns (side="top"):
+    shooting star, bearish engulfing, evening star, buying climax, double top, top breakdown.
+    For tops, `trigger` is the close BELOW which the top confirms, `stop` the high that voids it;
+    `confirmed` = closed below trigger, `failed` = closed above stop."""
+    top = side == "top"
+    sg = -1.0 if top else 1.0
+    if top:
+        df = _mirror(df)
+        base_levels = [(-p, src) for p, src in base_levels]
+    own_anchor = "anchored_vwap:from_52w_high" if top else "anchored_vwap:from_52w_low"
     o, h, l, c, v = (df[k].values for k in ("Open", "High", "Low", "Close", "Volume"))
     a = atr(df).values
     v50 = df["Volume"].rolling(50).mean().values
@@ -536,9 +573,12 @@ def reversals_block(df, base_levels, divs):
 
     def add(kind, i, trigger, stop, vol_ratio, already=False, note=None, window=CONFIRM_WINDOW):
         status, ci, fi = _status(df, i, trigger, stop, window, already)
-        lvl = _level_at(stop, i, df, base_levels, a[i])
-        out.append({"type": kind, "date": _date(df.index[i]), "sessions_ago": int(n - 1 - i),
-                    "trigger": _r(trigger), "stop": _r(stop), "status": status,
+        lvl = _level_at(stop, i, df, base_levels, a[i], own_anchor)
+        if lvl and top:
+            lvl = dict(lvl, price=_r(-lvl["price"]))
+        out.append({"type": TOP_NAMES.get(kind, kind) if top else kind, "side": side,
+                    "date": _date(df.index[i]), "sessions_ago": int(n - 1 - i),
+                    "trigger": _r(sg * trigger), "stop": _r(sg * stop), "status": status,
                     "confirmed_date": _date(df.index[ci]) if ci is not None else None,
                     "confirmed_sessions_ago": int(n - 1 - ci) if ci is not None else None,
                     "failed_date": _date(df.index[fi]) if fi is not None else None, "at_level": lvl,
@@ -565,7 +605,8 @@ def reversals_block(df, base_levels, divs):
             retest = [j for j in range(i + 1, n) if l[j] <= l[i] + a[i] and v[j] < 0.7 * v[i]]
             note = None
             if retest and later.min() >= l[i]:
-                note = f"retested on lighter volume {_date(df.index[retest[-1]])} and held (higher low)"
+                note = (f"retested on lighter volume {_date(df.index[retest[-1]])} and held "
+                        + ("(lower high)" if top else "(higher low)"))
             add("capitulation", i, h[i], l[i], v[i] / v50[i], note=note, window=REVERSAL_LOOKBACK)
 
     # double bottom: a prior swing low and a recent low within 1 ATR of it, with a real bounce between
@@ -581,11 +622,12 @@ def reversals_block(df, base_levels, divs):
         if abs(l[p2] - l[p1]) <= a[p2] and neck - max(l[p1], l[p2]) >= 1.5 * a[p2]:
             stop = float(min(l[p1], l[p2]))
             add("double_bottom", p2, neck, stop, v[p2] / v50[p2] if v50[p2] else np.nan,
-                note=f"lows {_date(df.index[p1])} ${l[p1]:.2f} and {_date(df.index[p2])} ${l[p2]:.2f}; "
-                     f"confirmed on a close above the ${neck:.2f} neckline",
+                note=(f"{'highs' if top else 'lows'} {_date(df.index[p1])} ${sg * l[p1]:.2f} and "
+                      f"{_date(df.index[p2])} ${sg * l[p2]:.2f}; confirmed on a close "
+                      f"{'below' if top else 'above'} the ${sg * neck:.2f} neckline"),
                 window=REVERSAL_LOOKBACK)
             # early trigger: a close above the second low's bar high — the aggressive entry, half size
-            out[-1]["early_trigger"] = _r(h[p2])
+            out[-1]["early_trigger"] = _r(sg * h[p2])
             break
 
     # base then breakout: ≥8 quiet sessions with no new low after a decline, then a high-volume close above the base
@@ -596,11 +638,13 @@ def reversals_block(df, base_levels, divs):
                 and c[i - 10] < c[i - 30] and c[i] > top and v[i] >= 1.5 * v50[i]:
             add("base_breakout", i, top, bot, v[i] / v50[i], already=True)
 
+    want = "bearish" if top else "bullish"
     for d in divs or []:
-        if d["type"] == "bullish" and d["sessions_since"] <= REVERSAL_LOOKBACK:
-            out.append({"type": "bullish_divergence", "indicator": d["indicator"], "date": d["pivot_2"]["date"],
-                        "sessions_ago": d["sessions_since"], "status": "supporting",
-                        "note": "lower price low, higher indicator low — supporting evidence, not a trigger"})
+        if d["type"] == want and d["sessions_since"] <= REVERSAL_LOOKBACK:
+            out.append({"type": f"{want}_divergence", "side": side, "indicator": d["indicator"],
+                        "date": d["pivot_2"]["date"], "sessions_ago": d["sessions_since"], "status": "supporting",
+                        "note": ("higher price high, lower indicator high" if top else
+                                 "lower price low, higher indicator low") + " — supporting evidence, not a trigger"})
     return sorted(out, key=lambda x: x["sessions_ago"])
 
 
@@ -624,8 +668,11 @@ def setup_block(df, s):
     pats = [p for p in s.get("reversals", []) if p.get("status") != "supporting"]
     at_lvl = [p for p in pats if p.get("at_level") and p["at_level"]["strong"]]
     # live = confirmed recently and price hasn't given the confirmation back (still within 1 ATR of the trigger)
+    def given_back(p):  # a heavy-volume break_down after the confirmation voids it
+        return any(b["direction"] == "break_down" and (b.get("volume_ratio_vs_50d") or 0) >= 1.5
+                   and b["date"] > (p.get("confirmed_date") or p["date"]) for b in s.get("recent_breaks", []))
     live = [p for p in at_lvl if p["status"] == "confirmed" and last >= p["stop"]
-            and p["confirmed_sessions_ago"] <= SIGNAL_FRESH and last >= p["trigger"] - a]
+            and p["confirmed_sessions_ago"] <= SIGNAL_FRESH and last >= p["trigger"] - a and not given_back(p)]
     pending = [p for p in at_lvl if p["status"] == "pending"]
     failed = [p for p in pats if p["status"] == "failed"]
     supports = lv.get("supports", [])
@@ -715,6 +762,184 @@ def spacing_block(df, ticker, trades=None):
     return out
 
 
+# ── stretch, sell side, options timing, swing plans ──────────────────────────
+
+def stretch_block(df):
+    """How far price has run from its means — overbought / oversold, and a volatility squeeze."""
+    close = df["Close"]
+    last = float(close.iloc[-1])
+    a = float(atr(df).iloc[-1])
+    sma20, sd20 = close.rolling(20).mean(), close.rolling(20).std()
+    sma50 = close.rolling(50).mean()
+    up, lo = sma20 + 2 * sd20, sma20 - 2 * sd20
+    width = (up - lo) / sma20
+    r14 = float(rsi(close).iloc[-1])
+    out = {"rsi14": _r(r14, 1),
+           "atr_from_sma20": _r((last - float(sma20.iloc[-1])) / a, 2),
+           "atr_from_sma50": _r((last - float(sma50.iloc[-1])) / a, 2),
+           "bb_pct_b": _r((last - float(lo.iloc[-1])) / float(up.iloc[-1] - lo.iloc[-1]), 2),
+           "bb_width_pct": _r(float(width.iloc[-1]), 4)}
+    w = width.iloc[-126:].dropna()
+    out["squeeze"] = bool(len(w) > 60 and float(width.iloc[-1]) <= float(w.quantile(0.10)))
+    ob = r14 >= 70 or (out["atr_from_sma20"] or 0) >= 3 or (out["bb_pct_b"] or 0) > 1
+    os_ = r14 <= 30 or (out["atr_from_sma20"] or 0) <= -3 or (out["bb_pct_b"] or 1) < 0
+    out["state"] = "overbought" if ob and not os_ else "oversold" if os_ and not ob else "neutral"
+    return out
+
+
+def exit_setup_block(df, s):
+    """Sell side for a position already held — mirror of `setup`. Signal:
+    trim (confirmed top pattern at resistance; trim_on_bounce when price already ran >2 ATR past it),
+    watch_top (pending one), extended (stretched) / at_resistance (pressing confluent resistance) —
+    don't chase, covered-call window; broken (falling regime — trade positions exit, core holdings
+    pause adds + thesis check); hold."""
+    last = float(df["Close"].iloc[-1])
+    lv, st, su = s.get("levels", {}), s.get("stretch", {}), s.get("setup", {})
+    a = lv.get("atr14") or float(atr(df).iloc[-1])
+    tops = [p for p in s.get("tops", []) if p.get("status") != "supporting"]
+    at_lvl = [p for p in tops if p.get("at_level") and p["at_level"]["strong"]]
+    live = [p for p in at_lvl if p["status"] == "confirmed" and last <= p["stop"]
+            and p["confirmed_sessions_ago"] <= SIGNAL_FRESH and last <= p["trigger"] + a]
+    pending = [p for p in at_lvl if p["status"] == "pending"]
+    res = [x for x in lv.get("resistances", []) if x["confluence"] >= 2]
+    near_res = [x for x in res if x["price"] - last <= 1.0 * a]
+    bl = (lv.get("break_level") or {}).get("price")
+    if bl and bl >= last * 0.85:
+        out = {"trail_stop": _r(bl * 0.99),
+               "trail_stop_rule": "confirmed close below the break level (see levels.break_level.confirmed_break_rule)"}
+    else:
+        out = {"trail_stop": _r(last - 3 * a) if a else None,
+               "trail_stop_rule": "no support within 15% (open air below) — 3 × ATR under price, not a level"}
+
+    def pat_txt(p):
+        lvl = p["at_level"]
+        return (f"{p['type'].replace('_', ' ')} {p['date']} at ${lvl['price']} ×{lvl['confluence']} "
+                f"(trigger ${p['trigger']}, voided above ${p['stop']}, {p['volume_ratio_vs_50d']}× vol)")
+
+    if live:
+        p = max(live, key=lambda p: (p["at_level"]["confluence"], -p["sessions_ago"]))
+        late = last < p["trigger"] - 2 * a
+        out.update(signal="trim_on_bounce" if late else "trim", basis=f"confirmed {pat_txt(p)}", trigger=p["trigger"],
+                   invalidation=_r(p["stop"] * 1.01), pattern=p["type"])
+        if late:
+            out["basis"] += (f" — but price is already >2 ATR below the trigger; don't sell the washout, "
+                             f"trim on a bounce toward ${p['trigger']}")
+    elif su.get("regime") == "falling" and su.get("signal") in ("no_add", "wait_confirmation"):
+        out.update(signal="broken", basis="falling regime — trade positions exit on the break rule; core holdings "
+                                          "are never sold on a level alone: pause adds, check the thesis")
+    elif pending:
+        p = max(pending, key=lambda p: (p["at_level"]["confluence"], -p["sessions_ago"]))
+        out.update(signal="watch_top", basis=f"pending {pat_txt(p)} — trim only on a close below ${p['trigger']}",
+                   trigger=p["trigger"], invalidation=_r(p["stop"] * 1.01), pattern=p["type"])
+    elif st.get("state") == "overbought" or near_res:
+        why = []
+        if st.get("state") == "overbought":
+            why.append(f"stretched (RSI {st.get('rsi14')}, {st.get('atr_from_sma20')} ATR above the 20-day)")
+        if near_res:
+            why.append(f"pressing ${near_res[0]['price']} ×{near_res[0]['confluence']} resistance")
+        ob = st.get("state") == "overbought"
+        out.update(signal="extended" if ob else "at_resistance",
+                   basis=" and ".join(why) + (" — don't chase; trim trading shares into strength, covered-call window"
+                                              if ob else " — don't chase; overhead supply, covered-call window"),
+                   overhead=near_res[0]["price"] if near_res else None)
+    else:
+        out.update(signal="hold", basis="no top pattern at a level, not stretched — let it run, trail the stop")
+    return out
+
+
+def options_timing_block(s):
+    """When the chart favors selling premium: covered calls into strength / resistance, cash-secured puts
+    at support after a bottom. Strike guides come from confluent levels; /options does the chain math."""
+    last = s.get("price")
+    lv, st, su, ex = s.get("levels", {}), s.get("stretch", {}), s.get("setup", {}), s.get("exit_setup", {})
+    a = lv.get("atr14") or 0
+    res = [x for x in lv.get("resistances", []) if x["confluence"] >= 2] or lv.get("resistances", [])
+    sup = [x for x in lv.get("supports", []) if x["confluence"] >= 2] or lv.get("supports", [])
+    gate = (s.get("gate") or {}).get("state")
+
+    # covered call: you want the stock NOT to run through the strike
+    above = [x["price"] for x in res if last + a <= x["price"] <= last + 6 * a]
+    cc = {"strike_at_or_above": above[0] if above else (_r(last + 2 * a) if a else None),
+          "strike_basis": "first confluent resistance ≥1 ATR above price" if above else "no level — 2 ATR above price"}
+    if st.get("state") == "oversold" or ex.get("signal") == "trim_on_bounce":
+        cc.update(timing="unfavorable", reason="washed out — selling calls into an oversold low gets little premium "
+                                               "and a bounce can run through the strike; sell into the rebound")
+    elif ex.get("signal") in ("trim", "watch_top", "extended", "at_resistance"):
+        cc.update(timing="favorable", reason=f"exit setup {ex['signal']}: {ex.get('basis')}")
+    elif su.get("signal") in ("add", "wait_confirmation"):
+        cc.update(timing="unfavorable", reason="washed out / bottoming — a bounce can run through a call sold here; "
+                                               "wait for the rebound into resistance")
+    elif su.get("regime") == "rising" and not st.get("state") == "overbought":
+        cc.update(timing="neutral", reason="uptrend with room — sell only far OTM, above the next resistance")
+    else:
+        cc.update(timing="neutral", reason="no strong edge from the chart")
+
+    # cash-secured put: assignment should land you at a level you'd defend — the nearest confluent support
+    # at/below the pattern stop (or price), within 3 ATR; past that there is no level, so say so
+    ref = su["stop"] if su.get("stop") and su.get("signal") in ("add", "wait_gate", "wait_confirmation") else last
+    if su.get("signal") == "no_add" and su.get("watch"):
+        ref = min(ref, min(w["price"] for w in su["watch"]) * 1.001)
+    cand = [x["price"] for x in sup if x["price"] <= ref and (not a or ref - x["price"] <= 3 * a)]
+    csp = {"strike_at_or_below": _r(cand[0] if cand else ref - 1.5 * a) if (cand or a) else None,
+           "strike_basis": "confluent support" if cand else "no level within 3 ATR — 1.5 ATR under the stop/price"}
+    if su.get("signal") == "wait_confirmation":
+        csp.update(timing="neutral", reason=f"bottom forming, not confirmed ({su.get('basis')}) — a put at/below the "
+                                            "pattern stop is defensible; favorable once it confirms")
+    elif su.get("signal") in ("add", "wait_gate") or (st.get("state") == "oversold" and su.get("regime") != "falling"):
+        csp.update(timing="favorable", reason=f"setup {su.get('signal')}: {su.get('basis')} — strike at/below the pattern stop or support")
+    elif su.get("signal") == "no_add":
+        csp.update(timing="unfavorable", reason="falling with no bottom at a level — if you sell anyway, only below the "
+                                                "lowest watch level, small, and with assignment you'd welcome")
+    elif st.get("state") == "overbought":
+        csp.update(timing="unfavorable", reason="stretched — puts are cheap and the pullback hasn't come; wait for support")
+    else:
+        csp.update(timing="neutral", reason="no strong edge from the chart — strike at/below the nearest confluent support")
+    if gate == "closed" and csp.get("timing") == "favorable":
+        csp.update(timing="neutral", reason=csp["reason"] + " — but the SPY gate is closed: size down")
+    return {"cc": cc, "csp": csp, "squeeze": bool(st.get("squeeze")),
+            "note": "squeeze = Bollinger width in its lowest 10% of 6 months: premium is thin and a big move is "
+                    "more likely — a poor time to sell premium" if st.get("squeeze") else None}
+
+
+def swing_block(s):
+    """Trade plans in both directions: entry, stop, first/second target from the level map, reward:risk.
+    `short` is a bearish swing (puts / put spreads, or trimming) — it never implies shorting core holdings."""
+    last = s.get("price")
+    lv, su, ex = s.get("levels", {}), s.get("setup", {}), s.get("exit_setup", {})
+    a = lv.get("atr14") or 0
+    res = [x["price"] for x in lv.get("resistances", [])]
+    sup = [x["price"] for x in lv.get("supports", [])]
+    out = {}
+
+    def plan(direction, entry, stop, targets, basis):
+        if not (entry and stop and targets) or (entry - stop) * (1 if direction == "long" else -1) <= 0:
+            return None
+        risk = abs(entry - stop)
+        rr = abs(targets[0] - entry) / risk
+        return {"entry": _r(entry), "stop": _r(stop), "targets": [_r(t) for t in targets[:2]],
+                "reward_risk": _r(rr, 2), "quality": "good" if rr >= 2 else "marginal" if rr >= 1 else "poor",
+                "basis": basis}
+
+    if su.get("signal") in ("add", "wait_confirmation", "wait_gate", "wait_pullback") and su.get("stop"):
+        entry = su.get("trigger") if su.get("signal") == "wait_confirmation" else \
+            (su["entry_zone"][1] if su.get("entry_zone") else last)
+        entry = entry or last
+        tg = [r for r in res if entry + 0.5 * a <= r <= entry + 6 * a] or ([_r(entry + 2 * a)] if a else [])
+        pl = plan("long", entry, su["stop"], tg, f"setup {su['signal']}: {su.get('basis')}")
+        if pl:
+            out["long"] = pl
+    if ex.get("signal") in ("trim", "trim_on_bounce", "watch_top") and ex.get("invalidation"):
+        entry = ex["trigger"] if ex["signal"] in ("watch_top", "trim_on_bounce") else min(last, ex["trigger"])
+        tg = sorted([x for x in sup if entry - 6 * a <= x <= entry - 0.5 * a], reverse=True) \
+            or ([_r(entry - 2 * a)] if a else [])
+        pl = plan("short", entry, ex["invalidation"], tg, f"exit setup {ex['signal']}: {ex.get('basis')}")
+        if pl:
+            out["short"] = pl
+    if not out:
+        out["none"] = "no pattern-backed swing in either direction right now"
+    return out
+
+
 _SPY_CACHE = {}
 
 
@@ -779,6 +1004,7 @@ def analyze(hist, float_shares=None, gate=None, ticker=None):
         out["recent_breaks"] = recent_breaks(df, out.get("trend", {}))
     except Exception as e:  # noqa: BLE001
         notes.append(f"structure.levels: {e}")
+    base = []
     try:
         base = _raw_levels(df, out.get("trend", {}), chips, vp, avwap, with_mas=False)
         out["reversals"] = reversals_block(df, base, out.get("divergences"))
@@ -788,6 +1014,15 @@ def analyze(hist, float_shares=None, gate=None, ticker=None):
             out["setup"] = apply_gate(out["setup"], gate, ticker or "")
     except Exception as e:  # noqa: BLE001
         notes.append(f"structure.reversals/setup: {e}")
+    for name, fn in (("stretch", lambda: stretch_block(df)),
+                     ("tops", lambda: reversals_block(df, base, out.get("divergences"), side="top")),
+                     ("exit_setup", lambda: exit_setup_block(df, out)),
+                     ("options_timing", lambda: options_timing_block(out)),
+                     ("swing", lambda: swing_block(out))):
+        try:
+            out[name] = fn()
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"structure.{name}: {e}")
     return out, notes
 
 
@@ -888,6 +1123,25 @@ def render_chart(df, s, float_shares, path, ticker, sessions=252):
                     arrowprops=dict(arrowstyle="-", color=colr, lw=0.8))
         ax.hlines(p["trigger"], max(i - 3, 0), min(i + 6, len(d) - 1), color=colr, linewidth=1.4, linestyle=":")
 
+    # topping patterns: label above the pattern bar
+    tabbr = {"shooting_star": "shoot. star", "bearish_engulfing": "bear engulf", "evening_star": "e-star",
+             "buying_climax": "climax", "double_top": "dbl top", "top_breakdown": "top b/d"}
+    tcol = {"confirmed": dn_c, "pending": "#d97706", "failed": "#64748b", "expired": "#94a3b8"}
+    tshown, tseen = [], set()
+    for p in s.get("tops", []):
+        if p["type"] in tabbr and p["status"] in ("confirmed", "pending") and p["type"] not in tseen:
+            tseen.add(p["type"])
+            tshown.append(p)
+    for k, p in enumerate(tshown[:4]):
+        i = date_pos.get(p["date"])
+        if i is None:
+            continue
+        colr = tcol.get(p["status"], "#64748b")
+        ax.annotate(f"{tabbr[p['type']]} · {p['status']}", (i, h[i]), xytext=(-40, 22 + 14 * k),
+                    textcoords="offset points", ha="right", fontsize=7.5, color=colr, fontweight="bold",
+                    arrowprops=dict(arrowstyle="-", color=colr, lw=0.8))
+        ax.hlines(p["trigger"], max(i - 3, 0), min(i + 6, len(d) - 1), color=colr, linewidth=1.4, linestyle=":")
+
     # indicators
     dif, dea, hist_ = macd_series(close_all)
     dif, dea, hist_ = (ser.reindex(d.index) for ser in (dif, dea, hist_))
@@ -960,6 +1214,11 @@ def render_chart(df, s, float_shares, path, ticker, sessions=252):
             sub += f" · trigger ${su['trigger']}"
         if su.get("stop"):
             sub += f" · stop ${su['stop']}"
+    ex = s.get("exit_setup") or {}
+    if ex:
+        sub += f" | exit: {ex.get('signal', '').upper()}"
+        if ex.get("pattern"):
+            sub += f" · {ex['pattern'].replace('_', ' ')}"
     title = f"{ticker}  ${last:.2f}  ({s.get('asof')})\n{sub}"
     ax.set_title(title.replace("$", r"\$"), fontsize=11, loc="left")   # "$" would start mathtext
     fig.savefig(path, bbox_inches="tight")
@@ -1004,9 +1263,10 @@ def summarize(ticker, s):
         lines.append(f"  confirmed if: {bl['confirmed_break_rule']} · ATR14 ${lv.get('atr14')}")
     for b in s.get("recent_breaks", []):
         lines.append(f"Recent: {b['direction']} {b['level']} ${b['price']} on {b['date']} (vol {b['volume_ratio_vs_50d']}× 50d)")
-    for p in s.get("reversals", []):
+    for p in s.get("reversals", []) + s.get("tops", []):
+        tag = "Top" if p.get("side") == "top" else "Pattern"
         if p["status"] == "supporting":
-            lines.append(f"Pattern: bullish divergence ({p['indicator']}) {p['date']} — supporting")
+            lines.append(f"{tag}: {p['type'].replace('_', ' ')} ({p['indicator']}) {p['date']} — supporting")
             continue
         lvl = p.get("at_level")
         at = f"at ${lvl['price']} ×{lvl['confluence']}" if lvl else "not at a level"
@@ -1017,8 +1277,13 @@ def summarize(ticker, s):
             st = f"confirmed {p['confirmed_date']}"
         elif p.get("failed_date"):
             st = f"failed {p['failed_date']} (never confirmed)"
-        lines.append(f"Pattern: {p['type']} {p['date']} {at} · {st} · trigger ${p['trigger']} "
-                     f"stop ${p['stop']} · vol {p['volume_ratio_vs_50d']}×" + (f" · {p['note']}" if p.get("note") else ""))
+        lines.append(f"{tag}: {p['type']} {p['date']} {at} · {st} · trigger ${p['trigger']} "
+                     f"{'void above' if tag == 'Top' else 'stop'} ${p['stop']} · vol {p['volume_ratio_vs_50d']}×"
+                     + (f" · {p['note']}" if p.get("note") else ""))
+    st_ = s.get("stretch")
+    if st_:
+        lines.append(f"STRETCH: {st_['state']} · RSI {st_['rsi14']} · {st_['atr_from_sma20']:+} ATR vs 20d, "
+                     f"{st_['atr_from_sma50']:+} vs 50d · BB %b {st_['bb_pct_b']}" + (" · SQUEEZE" if st_["squeeze"] else ""))
     su = s.get("setup")
     if su:
         extra = ""
@@ -1033,6 +1298,29 @@ def summarize(ticker, s):
         if su.get("watch"):
             extra += " · watch " + ", ".join(f"${w['price']} ×{w['confluence']}" for w in su["watch"])
         lines.append(f"SETUP: {su['regime']} → {su['signal'].upper()} — {su['basis']}{extra}")
+    ex = s.get("exit_setup")
+    if ex:
+        extra = ""
+        if ex.get("trigger"):
+            extra += f" · trigger (close below) ${ex['trigger']}"
+        if ex.get("invalidation"):
+            extra += f" · void on close above ${ex['invalidation']}"
+        if ex.get("trail_stop"):
+            extra += f" · trail stop ${ex['trail_stop']}"
+        lines.append(f"EXIT (if held): {ex['signal'].upper()} — {ex['basis']}{extra}")
+    ot = s.get("options_timing")
+    if ot:
+        cc, csp = ot["cc"], ot["csp"]
+        lines.append(f"OPTIONS: covered call {cc['timing']} (strike ≥ ${cc.get('strike_at_or_above')}) — {cc['reason']}")
+        lines.append(f"         cash-secured put {csp['timing']} (strike ≤ ${csp.get('strike_at_or_below')}) — {csp['reason']}")
+        if ot.get("note"):
+            lines.append(f"         {ot['note']}")
+    for side, pl in (s.get("swing") or {}).items():
+        if side == "none":
+            lines.append(f"SWING: {pl}")
+        else:
+            lines.append(f"SWING {side}: entry ${pl['entry']} · stop ${pl['stop']} · targets "
+                         + ", ".join(f"${t}" for t in pl["targets"]) + f" · R:R {pl['reward_risk']} ({pl['quality']})")
     g = s.get("gate")
     if g:
         lines.append(f"GATE (SPY): {g['state']} — {g['reason']}")
