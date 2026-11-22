@@ -633,10 +633,12 @@ def reversals_block(df, base_levels, divs, side="bottom"):
     # base then breakout: ≥8 quiet sessions with no new low after a decline, then a high-volume close above the base
     for i in range(max(start, 40), n):
         w = slice(i - 10, i)
-        top, bot = h[w].max(), l[w].min()
-        if top - bot <= 3 * a[i - 1] and bot >= l[i - 30:i - 10].min() - 0.25 * a[i - 1] \
-                and c[i - 10] < c[i - 30] and c[i] > top and v[i] >= 1.5 * v50[i]:
-            add("base_breakout", i, top, bot, v[i] / v50[i], already=True)
+        # base_hi / base_lo, not top / bot: `top` is this function's side flag, and shadowing it
+        # turned every later bottom-side pattern into a mislabelled, sign-flipped top
+        base_hi, base_lo = h[w].max(), l[w].min()
+        if base_hi - base_lo <= 3 * a[i - 1] and base_lo >= l[i - 30:i - 10].min() - 0.25 * a[i - 1] \
+                and c[i - 10] < c[i - 30] and c[i] > base_hi and v[i] >= 1.5 * v50[i]:
+            add("base_breakout", i, base_hi, base_lo, v[i] / v50[i], already=True)
 
     want = "bearish" if top else "bullish"
     for d in divs or []:
